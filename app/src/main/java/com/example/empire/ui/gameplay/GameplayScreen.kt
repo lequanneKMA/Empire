@@ -1,38 +1,43 @@
 package com.example.empire.ui.gameplay
 
+import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
-import com.example.empire.game.controls.DPad
-import com.example.empire.core.input.inputManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.navigation.NavController
 import com.example.empire.game.GameView
-
-
-
+import com.example.empire.game.Direction
+import com.example.empire.ui.controls.ControlsOverlay
 
 @Composable
 fun GameplayScreen(nav: NavController) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Composable game host vẽ player (mình dùng Compose version để dễ debug)
+    val context = LocalContext.current
+    val gameView = remember { GameView(context) }
+
+    Box(Modifier.fillMaxSize()) {
         AndroidView(
-            factory = { context -> GameView(context) },
+            factory = { _: Context -> gameView },
             modifier = Modifier.fillMaxSize()
         )
-        // DPad overlay ở góc dưới trái
-        Box(
+
+        ControlsOverlay(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-            contentAlignment = Alignment.BottomStart
-        ) {
-            DPad(
-                input = inputManager,
-                modifier = Modifier
-            )
-        }
+                .align(Alignment.Center),
+            onDirection = { dir -> gameView.setDirection(dir) },
+            onStop      = { gameView.stopMove() },
+            onAttackDown= { gameView.pressAttack() },
+            onAttackUp  = { gameView.releaseAttack() },
+            onADown     = { gameView.pressA() },
+            onAUp       = { gameView.releaseA() },
+            onBDown     = { gameView.pressB() },
+            onBUp       = { gameView.releaseB() },
+            onCDown     = { gameView.pressC() },
+            onCUp       = { gameView.releaseC() }
+        )
     }
 }
