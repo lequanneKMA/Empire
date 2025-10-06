@@ -27,6 +27,9 @@ object MapLoader {
         val mapWidth  = root.getInt("mapWidth")
         val mapHeight = root.getInt("mapHeight")
 
+    // --- optional spawn points ---
+    val spawnPointsObj = root.optJSONObject("spawnPoints")
+
         // --- load tileset bitmap (ARGB_8888, giữ alpha) ---
         val opts = BitmapFactory.Options().apply {
             inPreferredConfig = Bitmap.Config.ARGB_8888
@@ -69,6 +72,20 @@ object MapLoader {
             layers = layers
         )
         map.buildCollisionFromLayers()     // <-- thêm
+
+        // Ghi spawn points vào map
+        if (spawnPointsObj != null) {
+            val keys = spawnPointsObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val arr = spawnPointsObj.optJSONArray(key) ?: continue
+                if (arr.length() >= 2) {
+                    val sx = arr.optInt(0, 0)
+                    val sy = arr.optInt(1, 0)
+                    map.spawnPoints[key] = sx to sy
+                }
+            }
+        }
         return map
     }
 

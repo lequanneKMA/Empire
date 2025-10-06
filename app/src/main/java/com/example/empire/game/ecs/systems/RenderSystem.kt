@@ -9,9 +9,10 @@ import com.example.empire.game.map.MapRenderer
  * Chỉ xử lý vẽ, không có logic.
  */
 class RenderSystem(
-    private val renderer: MapRenderer,
+    private var renderer: MapRenderer,
     private val playerAnimator: PlayerAnimator
 ) {
+    fun setRenderer(newRenderer: MapRenderer) { this.renderer = newRenderer }
     /**
      * Vẽ theo camera & scale. Player đã đồng bộ x/y từ physics trước đó.
      *
