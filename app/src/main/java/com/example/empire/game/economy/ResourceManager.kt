@@ -5,8 +5,8 @@ package com.example.empire.game.economy
  * Thread-safety: không cần đồng bộ phức tạp ở MVP.
  */
 class ResourceManager(
-    startGold: Int = 20,
-    startMeat: Int = 4
+    startGold: Int = DEFAULT_START_GOLD,
+    startMeat: Int = DEFAULT_START_MEAT
 ) {
     var gold: Int = startGold; private set
     var meat: Int = startMeat; private set
@@ -20,5 +20,11 @@ class ResourceManager(
         gold -= cost.gold
         meat -= cost.meat
         return true
+    }
+
+    companion object {
+        // Central config for starting resources. Change here -> affects all new games (unless explicitly overridden).
+        const val DEFAULT_START_GOLD = 2000
+        const val DEFAULT_START_MEAT = 400
     }
 }

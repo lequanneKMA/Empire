@@ -23,10 +23,15 @@ class EnemyRenderSystem(
 
     fun update(dt: Float) {
         spawnSystem.enemies.forEach { e ->
-            if (!e.alive || e.hp <= 0) return@forEach
+            if (!e.alive) return@forEach
             val key = System.identityHashCode(e)
             val t = (frameTime[key] ?: 0f) + dt
-            val speedMul = if (e.state == SpawnSystem.Enemy.State.WALK) 1f else 0.6f
+            val speedMul = when(e.state){
+                SpawnSystem.Enemy.State.WALK -> 1f
+                SpawnSystem.Enemy.State.ATTACK -> 0.6f
+                SpawnSystem.Enemy.State.DEAD -> 0.5f // death anim chậm hơn
+                else -> 0.7f
+            }
             if (t > FRAME_DURATION / speedMul) {
                 frameTime[key] = t - FRAME_DURATION / speedMul
                 currentFrame[key] = (currentFrame[key] ?: 0) + 1
@@ -40,7 +45,7 @@ class EnemyRenderSystem(
         canvas.save()
         canvas.scale(scale, scale)
         enemies.forEach { e ->
-            if (!e.alive || e.hp <= 0) return@forEach
+            if (!e.alive) return@forEach
             val frames = framesForType(e.type)
             val dirSet = when(e.facing){
                 SpawnSystem.Enemy.Facing.UP -> frames.up
@@ -77,10 +82,12 @@ class EnemyRenderSystem(
                 val dst = DST_RECT.apply { set(x.toInt(), y.toInt(), (x+w).toInt(), (y+h).toInt()) }
                 canvas.drawBitmap(bmp, src, dst, null)
             }
-            if (e.hp < e.maxHp * 0.35f) {
+            if (e.state != SpawnSystem.Enemy.State.DEAD && e.hp < e.maxHp * 0.35f) {
                 canvas.drawRect(x, y, x + w, y + h, damageTint)
             }
-            drawHpBar(canvas, e, x, y)
+            if (e.state != SpawnSystem.Enemy.State.DEAD) {
+                drawHpBar(canvas, e, x, y)
+            }
         }
         canvas.restore()
     }

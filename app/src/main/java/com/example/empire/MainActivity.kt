@@ -11,6 +11,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.navigation.compose.rememberNavController
 import com.example.empire.ui.AppNav
+import com.example.empire.audio.AudioManager
+import com.example.empire.audio.SfxManager
 
 class MainActivity : ComponentActivity() {
 
@@ -46,6 +48,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         goImmersiveSticky()
+        // Khởi tạo nhạc nền từ assets (đặt file tại: app/src/main/assets/audio/soundbackground.mp3)
+    AudioManager.initFromAssets(this, "audio/soundbackground.mp3")
+    SfxManager.init(this)
         setContent { AppNav(rememberNavController()) }
     }
 

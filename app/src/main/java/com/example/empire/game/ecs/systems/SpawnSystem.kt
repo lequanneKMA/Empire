@@ -43,7 +43,7 @@ class SpawnSystem {
     // ===== Dynamic spawning (simple incremental spawner) =====
     var maxEnemies = 30
     private var spawnTimer = 0f
-    var spawnInterval = 3.5f // sẽ giảm dần theo thời gian
+    var spawnInterval = 2.2f // nhanh hơn (giảm từ 3.5) và sẽ giảm dần theo thời gian
     private var elapsed = 0f
     private var difficultyMul = 1f
     private var damageScale = 1f
@@ -52,9 +52,9 @@ class SpawnSystem {
     // ===== Wave Mode (3 waves -> cooldown -> restart) =====
     data class WaveConfig(
         val enemyTypes: List<EnemyType>,
-        val waves: Int = 3,
+        val waves: Int = 2,               // giảm còn 2 wave
         val countPerType: Int = 5,
-        val cooldownAfter: Float = 30f
+        val cooldownAfter: Float = 10f    // rút ngắn downtime
     )
     private var waveConfig: WaveConfig? = null
     private var currentWave = 0
@@ -62,9 +62,12 @@ class SpawnSystem {
     private var waveMode = false
     private var mapWidthPx = 0
     private var mapHeightPx = 0
+    // Reference to tile map for collision (optional)
+    private var tileMap: com.example.empire.game.map.TileMap? = null
     var onWaveCycleComplete: () -> Unit = {}
 
     fun setMapBounds(w: Int, h: Int) { mapWidthPx = w; mapHeightPx = h }
+    fun setTileMap(map: com.example.empire.game.map.TileMap?) { this.tileMap = map }
 
     fun enableWaves(cfg: WaveConfig) {
         waveConfig = cfg
@@ -95,7 +98,8 @@ class SpawnSystem {
             return
         }
         // If enemies cleared and more waves remain
-        if (_enemies.none { it.alive }) {
+        // Consider enemy 'cleared' once it has entered DEAD state (không cần chờ biến mất hẳn)
+        if (_enemies.none { it.alive && it.state != Enemy.State.DEAD }) {
             if (currentWave < cfg.waves) {
                 val next = currentWave + 1
                 spawnWave(next, cfg)
@@ -122,19 +126,24 @@ class SpawnSystem {
 
     // Player target is known (targetX,targetY). Avoid spawning quá gần player
     private fun randomSpawnPosAvoidPlayer(): Pair<Float, Float> {
-        val minDist = 220f
-        var tries = 0
+        val minDist = 90f   // gần hơn
+        val maxDist = 320f  // tránh quá xa
         val w = mapWidthPx.coerceAtLeast(1024)
         val h = mapHeightPx.coerceAtLeast(768)
-        while (tries < 20) {
-            val x = (0 until w).random().toFloat()
-            val y = (0 until h).random().toFloat()
-            val dx = (x - targetX)
-            val dy = (y - targetY)
-            if (dx*dx + dy*dy >= minDist * minDist) return x to y
+        var tries = 0
+        while (tries < 30) {
+            val ang = kotlin.random.Random.nextFloat() * (Math.PI * 2).toFloat()
+            val r = (minDist + kotlin.random.Random.nextFloat() * (maxDist - minDist))
+            val x = (targetX + kotlin.math.cos(ang) * r).coerceIn(0f, w - 1f)
+            val y = (targetY + kotlin.math.sin(ang) * r).coerceIn(0f, h - 1f)
+            val dx = x - targetX
+            val dy = y - targetY
+            val d2 = dx*dx + dy*dy
+            if (d2 >= minDist*minDist) return x to y
             tries++
         }
-        return (w/2f) to (h/2f) // fallback
+        // fallback: spawn hơi lệch so với player
+        return (targetX + 200f) to (targetY + 100f)
     }
 
     // call periodically from outside if needed; or integrate in update()
@@ -176,16 +185,20 @@ class SpawnSystem {
 
     fun spawnEnemy(x: Float, y: Float, type: EnemyType) {
         val baseHp = when(type){
-            EnemyType.SLIME -> 18
-            EnemyType.FLYBEE -> 22
-            EnemyType.MONSTER -> 36
-            EnemyType.WOLF -> 30
+            EnemyType.SLIME -> 40    // buff từ 18
+            EnemyType.FLYBEE -> 24
+            EnemyType.MONSTER -> 80  // buff từ 36
+            EnemyType.WOLF -> 34
         }
         val (w,h) = when(type){
-            EnemyType.WOLF -> 56f to 80f // x2 scale (original ~28x40)
-            else -> 28f to 40f
+            EnemyType.SLIME -> (28f*1.5f) to (40f*1.5f)      // giảm còn 1.5x (trước 3x)
+            EnemyType.MONSTER -> (28f*2f) to (40f*2f)        // giảm còn 2x (trước 4x)
+            EnemyType.WOLF -> 56f to 80f                     // giữ
+            EnemyType.FLYBEE -> 28f to 40f
         }
-        _enemies += Enemy(x, y, w = w, h = h, type = type, maxHp = baseHp, hp = baseHp)
+        val scaledHp = (baseHp * damageScale).toInt().coerceAtLeast(1)
+        val (fx, fy) = findFreePositionForSpawn(x, y, w, h, type)
+        _enemies += Enemy(fx, fy, w = w, h = h, type = type, maxHp = scaledHp, hp = scaledHp)
     }
 
     // Basic AI: wander + chase nearest player snapshot (provided externally via setPlayerTarget)
@@ -195,6 +208,7 @@ class SpawnSystem {
 
     // External callbacks
     var onPlayerHit: (Enemy, Int) -> Unit = { _, _ -> }
+    var onEnemyDeath: (EnemyType) -> Unit = { _ -> }
 
     // Damage application centralization
     fun applyDamage(e: Enemy, dmg: Int): Boolean {
@@ -214,6 +228,7 @@ class SpawnSystem {
         e.attackTimer = 0f
         e.deathTimer = deathDuration(e.type)
         e.kbTime = 0f
+        onEnemyDeath(e.type)
     }
 
     private fun deathDuration(type: EnemyType) = when(type){
@@ -231,8 +246,8 @@ class SpawnSystem {
     }
     private fun attackDamage(e: Enemy): Int = when(e.type){
         EnemyType.WOLF -> 4
-        EnemyType.MONSTER -> 5
-        EnemyType.SLIME -> 2
+        EnemyType.MONSTER -> 8   // buff từ 5
+        EnemyType.SLIME -> 4     // buff từ 2
         EnemyType.FLYBEE -> 3
     }.let { (it * damageScale).toInt().coerceAtLeast(1) }
     private fun attackCooldown(e: Enemy): Float = when(e.type){
@@ -318,23 +333,13 @@ class SpawnSystem {
             if (e.attackCooldown > 0f) e.attackCooldown -= dt
             // Apply movement (freeze while ATTACK)
             if (e.state != Enemy.State.ATTACK) {
-                e.x += e.vx * dt
-                e.y += e.vy * dt
-                // facing only update when moving / not attacking
-                if (kotlin.math.abs(e.vx) >= 1f || kotlin.math.abs(e.vy) >= 1f) {
-                    e.facing = if (kotlin.math.abs(e.vx) >= kotlin.math.abs(e.vy)) {
-                        if (e.vx >= 0) Enemy.Facing.RIGHT else Enemy.Facing.LEFT
-                    } else {
-                        if (e.vy >= 0) Enemy.Facing.DOWN else Enemy.Facing.UP
-                    }
-                }
+                applyMovementWithCollision(e, dt)
             }
             // Knockback decay
             if (e.kbTime > 0f) {
                 e.kbTime -= dt
                 val t = (e.kbTime / KB_DURATION).coerceIn(0f,1f)
-                e.x += e.kbVX * t * dt
-                e.y += e.kbVY * t * dt
+                if (t > 0f) applyKnockbackMovement(e, t * dt)
                 if (e.kbTime <= 0f) { e.kbVX = 0f; e.kbVY = 0f }
             }
         }
@@ -391,5 +396,84 @@ class SpawnSystem {
 
     companion object {
         private const val KB_DURATION = 0.2f
+    }
+
+    // ================= Collision Helpers =================
+    private fun canPassThrough(type: EnemyType): Boolean = when(type) {
+        EnemyType.FLYBEE -> true
+        else -> false
+    }
+
+    private fun applyMovementWithCollision(e: Enemy, dt: Float) {
+        val map = tileMap
+        if (map == null || canPassThrough(e.type)) {
+            e.x += e.vx * dt
+            e.y += e.vy * dt
+        } else {
+            val nx = e.x + e.vx * dt
+            if (!rectCollidesMap(nx, e.y, e.w, e.h, map)) {
+                e.x = nx
+            }
+            val ny = e.y + e.vy * dt
+            if (!rectCollidesMap(e.x, ny, e.w, e.h, map)) {
+                e.y = ny
+            }
+        }
+        // facing update
+        if (kotlin.math.abs(e.vx) >= 1f || kotlin.math.abs(e.vy) >= 1f) {
+            e.facing = if (kotlin.math.abs(e.vx) >= kotlin.math.abs(e.vy)) {
+                if (e.vx >= 0) Enemy.Facing.RIGHT else Enemy.Facing.LEFT
+            } else {
+                if (e.vy >= 0) Enemy.Facing.DOWN else Enemy.Facing.UP
+            }
+        }
+    }
+
+    private fun applyKnockbackMovement(e: Enemy, scaledDt: Float) {
+        val map = tileMap
+        if (map == null || canPassThrough(e.type)) {
+            e.x += e.kbVX * scaledDt
+            e.y += e.kbVY * scaledDt
+        } else {
+            val nx = e.x + e.kbVX * scaledDt
+            if (!rectCollidesMap(nx, e.y, e.w, e.h, map)) e.x = nx
+            val ny = e.y + e.kbVY * scaledDt
+            if (!rectCollidesMap(e.x, ny, e.w, e.h, map)) e.y = ny
+        }
+    }
+
+    private fun rectCollidesMap(x: Float, y: Float, w: Float, h: Float, map: com.example.empire.game.map.TileMap): Boolean {
+        val ts = map.tileSize
+        val left = (x / ts).toInt()
+        val right = ((x + w - 1) / ts).toInt()
+        val top = (y / ts).toInt()
+        val bottom = ((y + h - 1) / ts).toInt()
+        for (ty in top..bottom) {
+            for (tx in left..right) {
+                if (map.isSolidAt(tx, ty)) return true
+            }
+        }
+        return false
+    }
+
+    private fun findFreePositionForSpawn(x: Float, y: Float, w: Float, h: Float, type: EnemyType): Pair<Float, Float> {
+        val map = tileMap ?: return x to y
+        if (canPassThrough(type)) return x to y
+        if (!rectCollidesMap(x, y, w, h, map)) return x to y
+        val ts = map.tileSize.toFloat()
+        val maxRadiusTiles = 10
+        // Spiral / ring search expanding outward
+        for (r in 1..maxRadiusTiles) {
+            val samples = 16
+            val radius = r * ts
+            for (i in 0 until samples) {
+                val ang = (i.toFloat() / samples) * (Math.PI * 2).toFloat()
+                val nx = (x + kotlin.math.cos(ang) * radius).coerceIn(0f, mapWidthPx - w - 1f)
+                val ny = (y + kotlin.math.sin(ang) * radius).coerceIn(0f, mapHeightPx - h - 1f)
+                if (!rectCollidesMap(nx, ny, w, h, map)) return nx to ny
+            }
+        }
+        // Fallback: just return original even if colliding (rare if map mostly blocked) – enemy will be clamped by movement later
+        return x to y
     }
 }

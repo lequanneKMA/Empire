@@ -47,10 +47,10 @@ class EnemySpriteLoader(private val context: Context) {
         val side = loadDirSet(base, "Side_${name}")
         // Orientation assumptions (có thể chỉnh nếu asset khác):
         val sideLeft = when(kind){
-            EnemyKind.WOLF -> true     // Wolf sheet face LEFT
-            EnemyKind.MONSTER -> false // Monster face RIGHT
-            EnemyKind.SLIME -> false   // Slime face RIGHT
-            EnemyKind.FLYBEE -> false  // Flybee face RIGHT
+            EnemyKind.WOLF -> true      // Wolf sheet faces LEFT
+            EnemyKind.MONSTER -> true   // Adjusted: Monster sheet actually faces LEFT (was marked RIGHT) -> fix reversed animation
+            EnemyKind.SLIME -> false    // Slime sheet faces RIGHT
+            EnemyKind.FLYBEE -> false   // Flybee sheet faces RIGHT
         }
         return EnemyFrames(up = up, down = down, side = side, sideBaseFacesLeft = sideLeft)
     }

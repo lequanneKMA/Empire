@@ -35,6 +35,7 @@ import com.example.empire.game.ui.overlay.BuyMenuOverlay
 import com.example.empire.game.ui.overlay.GameOverOverlay
 import com.example.empire.game.ui.overlay.HousePromptOverlay
 import com.example.empire.game.ui.overlay.WaveHud
+import com.example.empire.audio.SfxManager
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -124,6 +125,7 @@ class GameView @JvmOverloads constructor(
             disableWaves()
             clear()
         }
+        setTileMap(map) // provide map reference for enemy collisions
     }
     private val enemySprites = EnemySpriteLoader(context).apply { loadAll() }
     private val enemyRender = EnemyRenderSystem(spawnSystem, enemySprites)
@@ -134,7 +136,8 @@ class GameView @JvmOverloads constructor(
     private val playerStats = PlayerStats(maxHp = 60)
 
     // economy & army
-    private val resources = ResourceManager(startGold = 60, startMeat = 8)
+    // Use ResourceManager defaults so changing its companion constants auto-updates starting values
+    private val resources = ResourceManager()
     private val projectileSystem = ProjectileSystem()
     private val armySystem = ArmySystem(resources, spawnSystem, projectileSystem)
     private val unlocks = Unlocks()
@@ -225,8 +228,21 @@ class GameView @JvmOverloads constructor(
     private val highlightPaint = Paint().apply { color = Color.argb(150, 255, 215, 0) }
     // Map switch button (HUD)
     private val mapButtonRect = RectF()
+    private val pauseButtonRect = RectF()
     private var mapBtnBitmap: Bitmap? = null
+    private var pauseBtnBitmap: Bitmap? = null
+    private var mapBtnScaled: Bitmap? = null
+    private var pauseBtnScaled: Bitmap? = null
+    private var mapBtnScaledW = 0
+    private var mapBtnScaledH = 0
+    private var pauseBtnScaledW = 0
+    private var pauseBtnScaledH = 0
     private var mapBtnPressed = false
+    private var pauseBtnPressed = false
+    private var paused = false
+    var onPauseChange: ((Boolean) -> Unit)? = null // callback ra Compose khi pause đổi từ bên trong
+    // Gating: phải clear đủ 2 wave (1 cycle) map trước mới mở map tiếp theo
+    private var highestClearedMapIndex = 0
 
     init {
         holder.addCallback(this)
@@ -247,8 +263,15 @@ class GameView @JvmOverloads constructor(
             unlocks.evaluate(progression.xp, progression.tier)
         }
 
-        // Khi enemy đánh trúng player
+    // Khi enemy đánh trúng player
         spawnSystem.onPlayerHit = { enemy, dmg ->
+        // Khi hoàn thành đủ chu kỳ (2 wave) ở map hiện tại => mở map kế
+        spawnSystem.onWaveCycleComplete = {
+            if (currentMapIndex > highestClearedMapIndex) {
+                highestClearedMapIndex = currentMapIndex
+                println("[PROGRESS] Map $currentMapId cleared. highestCleared=$highestClearedMapIndex")
+            }
+        }
             if (!playerStats.isDead && uiState != UiState.GAME_OVER) {
                 playerStats.damage(dmg)
                 applyKnockback(enemy.x + enemy.w/2f, enemy.y + enemy.h/2f)
@@ -257,12 +280,18 @@ class GameView @JvmOverloads constructor(
                     println("Player died -> GAME OVER")
                 }
             }
+            SfxManager.playEnemyAttack(enemy.type.name)
         }
+    spawnSystem.onEnemyDeath = { type -> SfxManager.stopEnemyAttackForType(type.name) }
 
         // Load map switch button bitmap
         try {
             context.assets.open("ui/Buttons/Button_Blue_9Slides.png").use { inS ->
                 mapBtnBitmap = BitmapFactory.decodeStream(inS)
+            }
+            // Load pause base (reuse same or different path). If you have custom PNG replace path below.
+            context.assets.open("ui/Buttons/Button_Blue_9Slides.png").use { inS ->
+                pauseBtnBitmap = BitmapFactory.decodeStream(inS)
             }
         } catch (e: Exception) {
             println("[WARN] Cannot load map switch button asset: ${e.message}")
@@ -321,7 +350,9 @@ class GameView @JvmOverloads constructor(
     // Update – đã tách physics/combat/spawn
     // =========================================================
     private fun update(dt: Float) {
-        // normalize input dir only when there's actual movement
+    if (paused) return // freeze everything while paused (still draws)
+
+    // normalize input dir only when there's actual movement
         var vx = dirX; var vy = dirY
         if (abs(vx) > 0.0001f || abs(vy) > 0.0001f) { // Avoid division by zero
             val l = sqrt(vx*vx + vy*vy)
@@ -381,9 +412,10 @@ class GameView @JvmOverloads constructor(
         }
         spawnSystem.setPlayerTarget(playerX + playerBody.w/2f, playerY + playerBody.h/2f)
         spawnSystem.update(dt)
-    enemyRender.update(dt)
+        enemyRender.update(dt)
         combatSystem.update(dt, playerX, playerY, playerBody.w, playerBody.h)
         armySystem.update(dt, playerX + playerBody.w/2f, playerY + playerBody.h/2f)
+        armySystem.postUpdate()
         armyRender.update(dt)
         // Projectiles
         projectileSystem.update(dt)
@@ -458,78 +490,90 @@ class GameView @JvmOverloads constructor(
 
     private fun drawHud(canvas: Canvas) {
         val unlockText = "Unlock L:${unlocks.lancerUnlocked} A:${unlocks.archerUnlocked} M:${unlocks.monkUnlocked}"
-        hudRenderer.draw(
-            canvas,
-            playerStats,
-            progression,
-            resources,
-            armySystem,
-            currentMapId,
-            unlocks,
-            unlockText
-        )
-
-    // Map switch button (top-right)
-    val rawBmp = mapBtnBitmap
-        val btnW: Float
-        val btnH: Float
-        if (rawBmp != null) {
-            // scale bitmap to a consistent on-screen size (target height 54px visual)
-            val targetH = 54
-            val scale = targetH.toFloat() / rawBmp.height
-            btnW = rawBmp.width * scale
-            btnH = targetH.toFloat()
-        } else {
-            btnW = 100f; btnH = 38f
-        }
-    val marginR = 8f + uiInset
-    val marginT = 8f + uiInset
-    mapButtonRect.set(width - btnW - marginR, marginT, width - marginR, marginT + btnH)
-        rawBmp?.let { bmp ->
-            canvas.save()
-            val targetW = mapButtonRect.width()
-            val targetH = mapButtonRect.height()
-            // draw scaled bitmap
-            val old = canvas.saveLayer(null, null)
-            canvas.drawBitmap(
-                Bitmap.createScaledBitmap(bmp, targetW.toInt(), targetH.toInt(), true),
-                mapButtonRect.left,
-                mapButtonRect.top,
-                null
+        if (!paused) {
+            hudRenderer.draw(
+                canvas,
+                playerStats,
+                progression,
+                resources,
+                armySystem,
+                currentMapId,
+                unlocks,
+                unlockText
             )
-            canvas.restoreToCount(old)
-            if (mapBtnPressed) {
-                // pressed overlay
-                val overlay = Paint().apply { color = Color.argb(90, 0, 0, 0) }
-                canvas.drawRect(mapButtonRect, overlay)
-            }
-        } ?: run {
-            // fallback simple rect if bitmap missing
-            val fallback = Paint().apply { color = Color.argb(180, 40, 40, 60) }
-            val border = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 2f; color = Color.WHITE }
-            canvas.drawRoundRect(mapButtonRect, 10f, 10f, fallback)
-            canvas.drawRoundRect(mapButtonRect, 10f, 10f, border)
         }
-        hudPaint.textSize = 18f
-    val text = if (!mapOverlay.visible) "MAP" else maps.getOrNull(mapOverlay.selectedIndex)?.id?.uppercase() ?: "?"
-        val textW = hudPaint.measureText(text)
-        canvas.drawText(text, mapButtonRect.centerX() - textW/2f, mapButtonRect.centerY() + 6f, hudPaint)
-    hudPaint.textSize = 14f
+
+        // (old small map button block removed – replaced by unified larger map & pause buttons block below)
+        // --- Map & Pause buttons layout (bigger) ---
+        val rawMap = mapBtnBitmap
+        val rawPause = pauseBtnBitmap
+        val targetH = 72 // bigger buttons
+        if (rawMap != null) {
+            val desiredW = (rawMap.width * (targetH.toFloat() / rawMap.height)).toInt()
+            if (mapBtnScaled == null || mapBtnScaledW != desiredW || mapBtnScaledH != targetH) {
+                mapBtnScaled = Bitmap.createScaledBitmap(rawMap, desiredW, targetH, true)
+                mapBtnScaledW = desiredW; mapBtnScaledH = targetH
+            }
+        }
+        if (rawPause != null) {
+            val desiredW = (rawPause.width * (targetH.toFloat() / rawPause.height)).toInt()
+            if (pauseBtnScaled == null || pauseBtnScaledW != desiredW || pauseBtnScaledH != targetH) {
+                pauseBtnScaled = Bitmap.createScaledBitmap(rawPause, desiredW, targetH, true)
+                pauseBtnScaledW = desiredW; pauseBtnScaledH = targetH
+            }
+        }
+        val marginR = 12f + uiInset
+        val marginT = 12f + uiInset
+        val spacing = 16f
+        val mapW = (mapBtnScaledW.takeIf { it>0 } ?: 120).toFloat()
+        val mapH = (mapBtnScaledH.takeIf { it>0 } ?: targetH).toFloat()
+        val pauseW = (pauseBtnScaledW.takeIf { it>0 } ?: 120).toFloat()
+        val pauseH = (pauseBtnScaledH.takeIf { it>0 } ?: targetH).toFloat()
+        mapButtonRect.set(width - mapW - marginR, marginT, width - marginR, marginT + mapH)
+        pauseButtonRect.set(width - mapW - pauseW - spacing - marginR, marginT, width - mapW - spacing - marginR, marginT + pauseH)
+        mapBtnScaled?.let { canvas.drawBitmap(it, mapButtonRect.left, mapButtonRect.top, null) }
+        pauseBtnScaled?.let { canvas.drawBitmap(it, pauseButtonRect.left, pauseButtonRect.top, null) }
+        // overlay pressed shade
+        if (mapBtnPressed) canvas.drawRect(mapButtonRect, Paint().apply { color = Color.argb(90,0,0,0) })
+        if (pauseBtnPressed) canvas.drawRect(pauseButtonRect, Paint().apply { color = Color.argb(90,0,0,0) })
+        // Draw labels
+        hudPaint.textSize = 20f
+        val mapText = if (!mapOverlay.visible) "MAP" else maps.getOrNull(mapOverlay.selectedIndex)?.id?.uppercase() ?: "?"
+        val mapTextW = hudPaint.measureText(mapText)
+        canvas.drawText(mapText, mapButtonRect.centerX() - mapTextW/2f, mapButtonRect.centerY() + 8f, hudPaint)
+        // Pause icon (two rectangles) drawn over pause button
+        val barW = pauseButtonRect.width()*0.18f
+        val gap = barW*0.6f
+        val barH = pauseButtonRect.height()*0.55f
+        val barTop = pauseButtonRect.centerY() - barH/2f
+        val barLeft1 = pauseButtonRect.centerX() - gap/2f - barW
+        val barLeft2 = pauseButtonRect.centerX() + gap/2f
+        val iconPaint = Paint().apply { color = Color.WHITE }
+        canvas.drawRoundRect(RectF(barLeft1, barTop, barLeft1+barW, barTop+barH), 6f,6f, iconPaint)
+        canvas.drawRoundRect(RectF(barLeft2, barTop, barLeft2+barW, barTop+barH), 6f,6f, iconPaint)
+        hudPaint.textSize = 14f
 
         mapOverlay.draw(canvas, maps.map { MapSelectOverlay.Entry(it.id, it.levelRequired, it.enemyTypes, it.damageScale) }, progression.tier + 1)
         buyOverlay.draw(canvas, resources, unlocks)
         if (uiState == UiState.GAME_OVER) gameOverOverlay.draw(canvas)
     housePromptOverlay.draw(canvas)
     waveHud.draw(canvas, spawnSystem.isWaveMode(), spawnSystem.currentWave(), spawnSystem.totalWaves(), spawnSystem.cooldownRemaining(), spawnSystem.inCycleCooldown())
+        // Canvas based pause menu removed (Compose McButton overlay handles pause UI)
+        // When paused we simply freeze gameplay; Compose layer will draw menu.
 
     // (Debug entrance overlay đã bỏ)
     }
+
+    // Removed non-Compose pause menu + navigation logic. Compose layer will call setPausedFromCompose(false) to resume.
 
     // Developer helper: public spawn hooks (có thể được gọi từ overlay buttons sau này)
     fun buyWarrior() { attemptBuy(UnitType.WARRIOR) }
     fun buyLancer() { attemptBuy(UnitType.LANCER) }
     fun buyArcher() { attemptBuy(UnitType.ARCHER) }
     fun buyMonk() { attemptBuy(UnitType.MONK) }
+
+    // Public UI bridge: toggle map selection overlay (used by Compose ControlsOverlay C button)
+    fun toggleMapOverlay() { mapOverlay.toggle() }
 
     private fun attemptBuy(type: UnitType) {
         val success = shopSystem.buy(type, playerX + playerBody.w/2f, playerY + playerBody.h/2f)
@@ -545,6 +589,23 @@ class GameView @JvmOverloads constructor(
     // Public API (Overlay gọi)
     // =========================================================
     fun setDirection(dir: Direction) {
+        // If an overlay is open, interpret direction as navigation instead of movement.
+        if (mapOverlay.visible) {
+            when (dir) {
+                Direction.Up -> mapOverlay.navigate(-1, maps.size)
+                Direction.Down -> mapOverlay.navigate(1, maps.size)
+                else -> {}
+            }
+            return
+        }
+        if (buyOverlay.visible) {
+            when (dir) {
+                Direction.Up -> buyOverlay.navigate(-1)
+                Direction.Down -> buyOverlay.navigate(1)
+                else -> {}
+            }
+            return
+        }
         // Reset current direction first
         dirX = 0f
         dirY = 0f
@@ -560,7 +621,7 @@ class GameView @JvmOverloads constructor(
     }
     fun stopMove() { dirX = 0f; dirY = 0f }
 
-    fun pressAttack()  { atkEdge = true; atkHeld = true }
+    fun pressAttack()  { atkEdge = true; atkHeld = true; SfxManager.playPlayerAttack() }
     fun releaseAttack(){ atkHeld = false }
 
     fun pressA() { handleButtonA() }
@@ -575,9 +636,16 @@ class GameView @JvmOverloads constructor(
         when (keyCode) {
             KeyEvent.KEYCODE_A, KeyEvent.KEYCODE_BUTTON_A -> { handleButtonA(); return true }
             KeyEvent.KEYCODE_B, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BACK -> { handleButtonB(); return true }
-            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_W -> { navigateMenu(0, -1); return true }
-            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_S -> { navigateMenu(0, 1); return true }
-            KeyEvent.KEYCODE_C -> { mapOverlay.toggle(); return true }
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_W -> {
+                if (mapOverlay.visible) mapOverlay.navigate(-1, maps.size) else if (buyOverlay.visible) buyOverlay.navigate(-1) else setDirection(Direction.Up)
+                return true
+            }
+            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_S -> {
+                if (mapOverlay.visible) mapOverlay.navigate(1, maps.size) else if (buyOverlay.visible) buyOverlay.navigate(1) else setDirection(Direction.Down)
+                return true
+            }
+            KeyEvent.KEYCODE_C -> { return true } // vô hiệu hóa C
+            KeyEvent.KEYCODE_P, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePauseInternal(); return true }
         }
         return super.onKeyDown(keyCode, event)
     }
@@ -588,6 +656,7 @@ class GameView @JvmOverloads constructor(
     fun handleButtonA() {
         when (uiState) {
             UiState.NONE -> {
+                if (paused) { return } // Pause handled by Compose overlay
                 when {
                     housePromptOverlay.visible -> { housePromptOverlay.hide(); buyOverlay.open() }
                     mapOverlay.visible -> mapOverlay.confirm(maps.size)
@@ -627,6 +696,8 @@ class GameView @JvmOverloads constructor(
                 spawnSystem.setAutoSpawnEnabled(false)
                 spawnSystem.setDamageScale(1f)
                 spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
+                spawnSystem.setTileMap(map) // ensure enemy collision uses new main map after respawn
+                armySystem.setTileMap(map)
             }
         }
         // Reset stats
@@ -653,7 +724,15 @@ class GameView @JvmOverloads constructor(
     fun pressB_new() { handleButtonB() }
 
     // Direction reuse for menu navigation
-    fun navigateMenu(dx: Int, dy: Int) { if (buyOverlay.visible) buyOverlay.navigate(dy) else if (mapOverlay.visible) mapOverlay.navigate(dy, maps.size) }
+    fun navigateMenu(dx: Int, dy: Int) {
+        if (mapOverlay.visible) {
+            mapOverlay.navigate(dy, maps.size)
+            return
+        }
+        if (buyOverlay.visible) {
+            buyOverlay.navigate(dy)
+        }
+    }
 
     // selectionToType removed (handled in BuyMenuOverlay)
 
@@ -716,22 +795,16 @@ class GameView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                if (mapButtonRect.contains(event.x, event.y)) {
-                    mapBtnPressed = true
-                    invalidate()
-                    return true
-                }
+                if (mapButtonRect.contains(event.x, event.y)) { mapBtnPressed = true; invalidate(); return true }
+                if (pauseButtonRect.contains(event.x, event.y)) { pauseBtnPressed = true; invalidate(); return true }
+                // Paused state handled by Compose; no touch targets here when paused.
             }
             MotionEvent.ACTION_UP -> {
-                if (mapBtnPressed && mapButtonRect.contains(event.x, event.y)) {
-                    mapBtnPressed = false
-                    mapOverlay.toggle()
-                    invalidate()
-                    return true
-                }
-                mapBtnPressed = false
+                if (mapBtnPressed && mapButtonRect.contains(event.x, event.y)) { mapOverlay.toggle(); }
+                if (pauseBtnPressed && pauseButtonRect.contains(event.x, event.y)) { togglePauseInternal() }
+                mapBtnPressed = false; pauseBtnPressed = false; invalidate();
             }
-            MotionEvent.ACTION_CANCEL -> { mapBtnPressed = false }
+            MotionEvent.ACTION_CANCEL -> { mapBtnPressed = false; pauseBtnPressed = false }
         }
         return super.onTouchEvent(event)
     }
@@ -743,6 +816,11 @@ class GameView @JvmOverloads constructor(
             println("[MAP] Locked. Need level ${target.levelRequired}, current $playerLevel")
             return
         }
+        // Gating theo wave clear: chỉ cho vào map (highestCleared + 1) hoặc quay lại map cũ
+        if (index > highestClearedMapIndex + 1) {
+            println("[MAP] Locked. Clear previous map waves first (cleared up to index=$highestClearedMapIndex)")
+            return
+        }
         currentMapIndex = index
         currentMapId = target.id
         println("[MAP] Switching to $currentMapId")
@@ -750,10 +828,12 @@ class GameView @JvmOverloads constructor(
         mapRenderer = MapRenderer(map)
         renderSystem.setRenderer(mapRenderer)
         physics = PhysicsSystem(map)
+        spawnSystem.setTileMap(map)
+        armySystem.setTileMap(map)
         spawnSystem.clear()
         spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
         if (target.enemyTypes.isNotEmpty()) {
-            spawnSystem.enableWaves(SpawnSystem.WaveConfig(target.enemyTypes, waves = 3, countPerType = 5, cooldownAfter = 30f))
+            spawnSystem.enableWaves(SpawnSystem.WaveConfig(target.enemyTypes, waves = 2, countPerType = 5, cooldownAfter = 20f))
             spawnSystem.setDamageScale(target.damageScale)
             spawnSystem.setAutoSpawnEnabled(false)
         } else {
@@ -775,5 +855,20 @@ class GameView @JvmOverloads constructor(
             u.y = playerY + 20f + kotlin.math.sin(angle) * radius
         }
         mapOverlay.hide()
+    }
+
+    fun setPausedFromCompose(p: Boolean) { // gọi từ Compose -> không callback để tránh vòng lặp
+        paused = p
+    }
+
+    private fun togglePauseInternal() {
+        paused = !paused
+        onPauseChange?.invoke(paused)
+    }
+    fun forcePause(value: Boolean) {
+        if (paused != value) {
+            paused = value
+            onPauseChange?.invoke(paused)
+        }
     }
 }
