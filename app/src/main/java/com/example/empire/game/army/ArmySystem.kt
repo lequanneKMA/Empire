@@ -26,19 +26,47 @@ class ArmySystem(
     private var aiController: ArmyAIController? = null
     fun setTileMap(map: TileMap?) {
         tileMap = map
-        if (map != null) {
-            aiController = ArmyAIController(map) { unit, mx, my -> attemptMove(unit, mx, my) }
-        } else aiController = null
+        aiController = if (map != null) ArmyAIController(map) { unit, mx, my -> attemptMove(unit, mx, my) } else null
+        if (map != null) buildExtraBlocked(map) else extraBlocked = null
     }
 
-    // Collision bounds (approx sprite size). Using bottom-centered anchor: u.x = centerX, u.y = bottomY
-    // Logical collision size (reduced ~55% for smaller footprint vs original 32x48)
-    private val unitW = 18f
-    private val unitH = 26f
+    // Collision bounds (bottom-center). Slightly larger to prevent slipping through narrow diagonal gaps.
+    private val unitW = 24f
+    private val unitH = 32f
+    private var extraBlocked: Array<BooleanArray>? = null
+
+    private fun buildExtraBlocked(map: TileMap) {
+        val w = map.mapWidth; val h = map.mapHeight
+        val arr = Array(h) { BooleanArray(w) }
+        val blockLayers = setOf("Water", "WaterDeep", "Ocean")
+        for (layer in map.layers) if (layer.name.trim() in blockLayers) {
+            for (t in layer.tiles) if (t.x in 0 until w && t.y in 0 until h) arr[t.y][t.x] = true
+        }
+        extraBlocked = arr
+    }
 
     fun clear() { _units.clear() }
 
     var maxUnits = 20
+
+    // Formation configuration
+    enum class FormationType { GRID, CIRCLE }
+    var formationType: FormationType = FormationType.GRID
+    var formationColumns: Int = 4
+    var formationSpacingX: Float = 40f
+    var formationSpacingY: Float = 38f
+    var formationFrontOffsetY: Float = 80f // hàng trước cách player
+    var formationBackGapY: Float = 80f // (legacy) khoảng cách block ranged phía sau – vẫn giữ cho backward compatibility
+    var formationRowSpacingY: Float = 80f // NEW: khoảng cách giữa các hàng theo từng loại quân
+    var formationLerpSpeed: Float = 6f // smoothing tốc độ tiến tới vị trí formation
+    var autoCircleOnCombat: Boolean = true
+    // Cung cấp tier của player để chọn variant attack (Warrior Attack1/Attack2 theo tier)
+    var playerTierProvider: () -> Int = { 0 }
+
+    fun setFormation(type: FormationType, columns: Int = formationColumns) {
+        formationType = type
+        if (columns > 0) formationColumns = columns
+    }
 
     /** Callback khi spawn (để GameView có thể play SFX, v.v.) */
     var onUnitSpawned: (UnitEntity) -> Unit = {}
@@ -98,8 +126,14 @@ class ArmySystem(
         if (refreshTarget) targetAccum = targetRefreshInterval
 
         val enemies = spawnSystem.enemies
-        val total = _units.size
-        _units.forEachIndexed { i, u ->
+        val anyEngaging = enemies.any { it.alive && it.hp > 0 } && _units.any { it.targetEnemyIndex != null }
+        // Auto switch formation type
+        if (autoCircleOnCombat) {
+            formationType = if (anyEngaging) FormationType.CIRCLE else FormationType.GRID
+        }
+        val ordered = _units.toList() // giữ thứ tự spawn ban đầu; formationFollow tự nhóm theo type khi GRID
+        val total = ordered.size
+        ordered.forEachIndexed { i, u ->
             if (u.hp <= 0) return@forEachIndexed
             if (u.cooldown > 0f) u.cooldown -= dt
             when (u.type) {
@@ -108,6 +142,7 @@ class ArmySystem(
                 else -> formationFollow(u, dt, playerX, playerY, i, total)
             }
         }
+        // (Damage vào army giờ được xử lý qua callback impact từ SpawnSystem -> onEnemyAttackImpact)
     }
 
     private var targetAccum = 0f
@@ -144,15 +179,13 @@ class ArmySystem(
 
         if (!u.isInAttackRange) {
             val speed = u.stats.moveSpeed
-            if (dist > 2f) {
-                val mxTry = (dx / dist) * speed * dt
-                val myTry = (dy / dist) * speed * dt
-                val canDirect = attemptMove(u, mxTry, myTry, previewOnly = true)
-                if (!canDirect) aiController?.update(u, ex, ey, frameCounter++, dt, u.stats.moveSpeed) else u.clearPath()
-                if (u.path != null) followPathLegacy(u, speed, dt) else attemptMove(u, mxTry, myTry)
-                u.vx = mxTry / dt; u.vy = myTry / dt
+            val oldX = u.x
+            aiController?.update(u, ex, ey, frameCounter++, dt, speed)
+            val moved = kotlin.math.abs(u.x - oldX) > 0.05f || kotlin.math.abs(u.y - cy) > 0.05f
+            if (moved) {
+                if (u.x < oldX) u.facing = Facing.LEFT else if (u.x > oldX) u.facing = Facing.RIGHT
                 u.anim = AnimState.MOVE
-            }
+            } else u.anim = AnimState.IDLE
         } else {
             // trong tầm – tấn công nếu cooldown xong
             if (u.cooldown <= 0f) {
@@ -205,8 +238,15 @@ class ArmySystem(
         }
         // TODO: nếu enemy có giáp sau này: dmg = max(1, dmg - enemy.defense)
         val killed = spawnSystem.applyDamage(enemy, dmg)
-        // Chọn variant attack (Warrior có Attack1/Attack2, Lancer/Archer 1 sheet)
-        u.attackVariantIndex = (u.attackVariantIndex + 1) % 2 // simple toggle giữa 0/1
+        // Chọn variant attack
+        if (u.type == UnitType.WARRIOR) {
+            val tier = playerTierProvider().coerceAtLeast(0)
+            // tier 0/1 -> Attack1, tier >=2 -> Attack2 (có thể điều chỉnh nếu logic tier hiển thị khác)
+            u.attackVariantIndex = if (tier >= 1) 1 else 0
+        } else {
+            // Các unit khác vẫn có thể toggle nếu có nhiều sheet (hiện tại Lancer/Archer thường chỉ 1)
+            u.attackVariantIndex = (u.attackVariantIndex + 1) % 2
+        }
         u.attackAnimTimer = 0f
         u.cooldown = u.stats.cooldown
         u.anim = AnimState.ATTACK
@@ -242,13 +282,11 @@ class ArmySystem(
 
         if (!u.isInAttackRange) {
             val speed = u.stats.moveSpeed
-            if (dist > range * 0.8f) {
-                val mxTry = (dx / dist) * speed * dt
-                val myTry = (dy / dist) * speed * dt
-                val canDirect = attemptMove(u, mxTry, myTry, previewOnly = true)
-                if (!canDirect) aiController?.update(u, ex, ey, frameCounter++, dt, u.stats.moveSpeed) else u.clearPath()
-                if (u.path != null) followPathLegacy(u, speed, dt) else attemptMove(u, mxTry, myTry)
-                u.vx = mxTry / dt; u.vy = myTry / dt
+            val oldX = u.x; val oldY = u.y
+            aiController?.update(u, ex, ey, frameCounter++, dt, speed)
+            val moved = kotlin.math.abs(u.x - oldX) > 0.05f || kotlin.math.abs(u.y - oldY) > 0.05f
+            if (moved) {
+                if (u.x < oldX) u.facing = Facing.LEFT else if (u.x > oldX) u.facing = Facing.RIGHT
                 u.anim = AnimState.MOVE
             } else u.anim = AnimState.IDLE
         } else {
@@ -280,11 +318,55 @@ class ArmySystem(
     }
 
     private fun formationFollow(u: UnitEntity, dt: Float, playerX: Float, playerY: Float, idx: Int, total: Int) {
-        val angle = (idx.toFloat()/total) * (Math.PI * 2.0).toFloat()
-        val radius = 80f
-        val tx = playerX + cos(angle) * radius
-        val ty = playerY + sin(angle) * radius
-        steer(u, tx.toFloat(), ty.toFloat(), dt)
+        when (formationType) {
+            FormationType.CIRCLE -> {
+                val angle = (idx.toFloat()/total.coerceAtLeast(1)) * (Math.PI * 2.0).toFloat()
+                val radius = 90f
+                updateFormationTarget(u, playerX + cos(angle) * radius, playerY + sin(angle) * radius)
+            }
+            FormationType.GRID -> {
+                // Per-unit-type rows (mỗi loại quân 1 hàng). Thứ tự trước->sau: Warrior, Lancer, Archer, Monk.
+                // Hàng chỉ tồn tại nếu có ít nhất 1 unit của loại đó (không tạo khoảng trống thừa).
+                val typeOrder = listOf(UnitType.WARRIOR, UnitType.LANCER, UnitType.ARCHER, UnitType.MONK)
+                // Danh sách các loại hiện có (giữ thứ tự ưu tiên)
+                val presentTypes = typeOrder.filter { t -> _units.any { it.type == t && it.hp > 0 } }
+                val rowIndex = presentTypes.indexOf(u.type).coerceAtLeast(0)
+                // Lấy danh sách unit cùng loại (ổn định theo thứ tự xuất hiện ban đầu trong _units)
+                val sameType = _units.filter { it.type == u.type && it.hp > 0 }
+                val colIndex = sameType.indexOf(u).coerceAtLeast(0)
+                val colsInRow = sameType.size.coerceAtLeast(1)
+                val startX = playerX - ((colsInRow - 1) * 0.5f * formationSpacingX)
+                val tx = startX + colIndex * formationSpacingX
+                val ty = playerY + formationFrontOffsetY + rowIndex * formationRowSpacingY
+                updateFormationTarget(u, tx, ty)
+            }
+        }
+        // Smooth steer toward cached target
+        steerFormation(u, dt)
+    }
+
+    private fun updateFormationTarget(u: UnitEntity, tx: Float, ty: Float) {
+        if (!u.formInit) {
+            u.formTx = tx; u.formTy = ty; u.formInit = true
+        } else {
+            u.formTx = tx; u.formTy = ty
+        }
+    }
+
+    private fun steerFormation(u: UnitEntity, dt: Float) {
+        val dx = u.formTx - u.x
+        val dy = u.formTy - u.y
+        val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+        if (dist < 3f) { u.anim = AnimState.IDLE; return }
+        // interpolation speed independent from unit base speed but capped
+        val maxStep = u.stats.moveSpeed * dt
+        val want = formationLerpSpeed * dist * dt // proportional
+        val step = kotlin.math.min(maxStep, want)
+        val mx = (dx / dist) * step
+        val my = (dy / dist) * step
+        attemptMove(u, mx, my)
+        u.anim = AnimState.MOVE
+        if (mx < 0f) u.facing = Facing.LEFT else if (mx > 0f) u.facing = Facing.RIGHT
     }
 
     private fun steer(u: UnitEntity, tx: Float, ty: Float, dt: Float) {
@@ -301,59 +383,43 @@ class ArmySystem(
     }
 
     // ================= Movement + Collision =================
-    private fun attemptMove(u: UnitEntity, mx: Float, my: Float, previewOnly: Boolean = false): Boolean {
-        val map = tileMap
-        if (map == null) {
+      private fun attemptMove(u: UnitEntity, mx: Float, my: Float, previewOnly: Boolean = false): Boolean {
+        val map = tileMap ?: run {
             if (!previewOnly) { u.x += mx; u.y += my }
             return true
         }
-        // Chia nhỏ bước để tránh xuyên tường khi tốc độ cao (simple sub-step)
-        val steps = kotlin.math.max(1, kotlin.math.ceil((kotlin.math.max(kotlin.math.abs(mx), kotlin.math.abs(my)) / 8f)).toInt())
-        val stepX = mx / steps
-        val stepY = my / steps
-        for (i in 0 until steps) {
-            if (stepX != 0f) {
-                val nx = u.x + stepX
-                if (!collidesMap(nx, u.y, map)) { if (!previewOnly) u.x = nx } else return false
-            }
-            if (stepY != 0f) {
-                val ny = u.y + stepY
-                if (!collidesMap(u.x, ny, map)) { if (!previewOnly) u.y = ny } else return false
-            }
+        var moved = false
+        var nx = u.x
+        var ny = u.y
+        if (mx != 0f) {
+            val test = nx + mx
+            if (!collidesMap(test, ny, map)) { nx = test; moved = true }
         }
-        return true
+        if (my != 0f) {
+            val test = ny + my
+            if (!collidesMap(nx, test, map)) { ny = test; moved = true }
+        }
+        if (!previewOnly) { u.x = nx; u.y = ny }
+        return moved
     }
 
-    // Legacy path follow (still used until movement fully moved to AI controller steering)
-    private fun followPathLegacy(u: UnitEntity, speed: Float, dt: Float) {
-        val map = tileMap ?: return
-        val path = u.path ?: return
-        if (u.pathIndex >= path.size) { u.clearPath(); return }
-        val ts = map.tileSize.toFloat()
-        val (tx, ty) = path[u.pathIndex]
-        val targetX = tx * ts + ts/2f
-        val targetY = ty * ts + unitH
-        val dx = targetX - u.x
-        val dy = targetY - u.y
-        val dist = kotlin.math.sqrt(dx*dx + dy*dy)
-        if (dist < 5f) { u.pathIndex++; if (u.pathIndex >= path.size) u.clearPath(); return }
-        val mx = (dx / dist) * speed * dt
-        val my = (dy / dist) * speed * dt
-        attemptMove(u, mx, my)
-    }
+    // followPathLegacy removed: AI controller now performs movement directly
 
     private fun collidesMap(cx: Float, by: Float, map: TileMap): Boolean {
-        // cx: center X, by: bottom Y (anchor); convert to AABB
         val left = cx - unitW/2f
         val top = by - unitH
         val w = unitW
         val h = unitH
         val ts = map.tileSize
         val tx0 = (left / ts).toInt()
-        val tx1 = ((left + w - 1) / ts).toInt()
+        val tx1 = ((left + w - 0.01f) / ts).toInt()
         val ty0 = (top / ts).toInt()
-        val ty1 = ((top + h - 1) / ts).toInt()
-        for (ty in ty0..ty1) for (tx in tx0..tx1) if (map.isSolidAt(tx, ty)) return true
+        val ty1 = ((top + h - 0.01f) / ts).toInt()
+        val extra = extraBlocked
+        for (ty in ty0..ty1) for (tx in tx0..tx1) {
+            if (map.isSolidAt(tx, ty)) return true
+            if (extra != null && ty in extra.indices && tx in 0 until extra[ty].size && extra[ty][tx]) return true
+        }
         return false
     }
 
@@ -433,4 +499,31 @@ class ArmySystem(
 
     // Hook separation at end of public update
     fun postUpdate() { applySeparation() }
+    // Enemy impact callback (gọi từ GameView khi spawnSystem báo impact frame)
+    fun onEnemyAttackImpact(enemy: SpawnSystem.Enemy) {
+        if (_units.isEmpty()) return
+        if (!enemy.alive || enemy.hp <= 0) return
+        // Chọn unit gần nhất với tâm enemy trong bán kính attackRange
+        val ex = enemy.x + enemy.w/2f
+        val ey = enemy.y + enemy.h/2f
+        val range = 52f
+        var best: UnitEntity? = null
+        var bestD2 = Float.MAX_VALUE
+        _units.forEach { u ->
+            if (u.hp <= 0) return@forEach
+            val dx = u.x - ex
+            val dy = u.y - ey
+            val d2 = dx*dx + dy*dy
+            if (d2 < range*range && d2 < bestD2) { bestD2 = d2; best = u }
+        }
+        val target = best ?: return
+        val dmg = when(enemy.type) {
+            SpawnSystem.EnemyType.WOLF -> 4
+            SpawnSystem.EnemyType.MONSTER -> 7
+            SpawnSystem.EnemyType.SLIME -> 3
+            SpawnSystem.EnemyType.FLYBEE -> 3
+        }
+        target.hp -= dmg
+        if (target.hp <= 0) { target.hp = 0; target.anim = AnimState.IDLE }
+    }
 }

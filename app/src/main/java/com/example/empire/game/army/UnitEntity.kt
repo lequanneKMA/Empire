@@ -23,6 +23,11 @@ package com.example.empire.game.army
      var pathGoalTy: Int = -1,
      var lastPosX: Float = x,
      var lastPosY: Float = y
+    ,
+    // Formation target (smoothed)
+    var formTx: Float = x,
+    var formTy: Float = y,
+    var formInit: Boolean = false
  ) {
      fun clearPath() { path = null; pathIndex = 0; pathGoalTx = -1; pathGoalTy = -1 }
      fun moveToward(tx: Float, ty: Float) {

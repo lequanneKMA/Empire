@@ -75,7 +75,16 @@ class ArmyAIController(
             return
         }
         if (unit.pathIndex >= path.size) {
-            unit.moveToward(targetX, targetY)
+            // Path đã xong: tiếp tục lái trực tiếp nhưng vẫn qua collision mover
+            val dx = targetX - unit.x
+            val dy = targetY - unit.y
+            val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+            if (dist > 1f) {
+                val step = moveSpeed * dt
+                val mx = (dx / dist) * step
+                val my = (dy / dist) * step
+                mover(unit, mx, my)
+            }
             return
         }
         // Path smoothing: Skip ahead while LOS to further nodes

@@ -208,6 +208,8 @@ class SpawnSystem {
 
     // External callbacks
     var onPlayerHit: (Enemy, Int) -> Unit = { _, _ -> }
+    // Callback khi enemy gây damage (impact) – cho army units
+    var onEnemyAttackImpact: (Enemy) -> Unit = { _ -> }
     var onEnemyDeath: (EnemyType) -> Unit = { _ -> }
 
     // Damage application centralization
@@ -290,7 +292,10 @@ class SpawnSystem {
                 val triggerTime = attackDuration(e) - attackHitPoint(e)
                 if (!e.attackDidDamage && e.attackTimer <= triggerTime) {
                     e.attackDidDamage = true
+                    // Gây damage lên player
                     onPlayerHit(e, attackDamage(e))
+                    // Báo impact để ArmySystem xử lý lựa chọn unit trúng
+                    onEnemyAttackImpact(e)
                 }
                 if (e.attackTimer <= 0f) {
                     e.state = Enemy.State.IDLE

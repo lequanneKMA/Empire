@@ -28,14 +28,26 @@ class ArmyRenderSystem(
 
     private val renderScale = 0.55f // ~ hơn 1/2 kích thước gốc
 
+    // Base movement frame time (seconds per frame)
+    private val moveFrameTime = 0.12f
+    // Attack frame pacing tùy loại
+    private val warriorAttackFrameTime = 0.30f  // chậm hơn (4 frame ~1.2s) để cảm giác nặng rõ
+    private val lancerAttackFrameTime = 0.20f   // 3 frame => ~0.60s anim (nhẹ hơn cooldown)
+    private val archerAttackFrameTime = 0.18f
+    private val monkCastFrameTime = 0.18f
+    private fun attackFrameTime(u: UnitEntity, attackFrames: Int): Float = when(u.type) {
+        UnitType.WARRIOR -> warriorAttackFrameTime
+        UnitType.LANCER -> lancerAttackFrameTime
+        UnitType.ARCHER -> archerAttackFrameTime
+        UnitType.MONK -> monkCastFrameTime
+    }
+
     fun draw(canvas: Canvas, camX: Int, camY: Int, scale: Float) {
         canvas.save()
         canvas.scale(scale, scale)
-    val moveFrameTime = 0.12f
-    val attackFrameTime = 0.10f
-    // Iterate over a snapshot to avoid ConcurrentModificationException if units list changes mid-frame
-    val snapshot = army.units.toList()
-    snapshot.forEach { u ->
+        // Iterate over a snapshot to avoid ConcurrentModificationException if units list changes mid-frame
+        val snapshot = army.units.toList()
+        snapshot.forEach { u ->
             val frames = spriteLoader.load(u.type)
             val facingLeft = u.facing == Facing.LEFT
             val runFrames = if (facingLeft && frames.runLeft != null) frames.runLeft.frames else frames.runRight.frames
@@ -44,18 +56,21 @@ class ArmyRenderSystem(
                 val anim = attackPools.getOrNull(u.attackVariantIndex % attackPools.size) ?: attackPools.first()
                 anim.frames
             } else runFrames
-            val chosenList = when(u.anim){
-                AnimState.ATTACK -> attackFrames
-                AnimState.CAST -> (frames.heal?.frames ?: frames.idle.frames)
-                AnimState.MOVE -> runFrames
-                AnimState.IDLE -> frames.idle.frames
+            // Lancer defend show: nếu có sheet defend và đang IDLE (không MOVE/ATTACK) trong khi cooldown > 40% còn lại.
+            val defendPools = if (facingLeft) frames.defendLeft else frames.defendRight
+            val showDefend = (u.type == UnitType.LANCER && u.anim == AnimState.IDLE && defendPools.isNotEmpty() && u.cooldown > u.stats.cooldown * 0.4f)
+            val defendFrames = if (showDefend) defendPools.first().frames else null
+            val chosenList = when {
+                u.anim == AnimState.ATTACK -> attackFrames
+                u.anim == AnimState.CAST -> (frames.heal?.frames ?: frames.idle.frames)
+                showDefend -> defendFrames ?: frames.idle.frames
+                u.anim == AnimState.MOVE -> runFrames
+                else -> frames.idle.frames
             }
-            val frameTime = if (u.anim == AnimState.ATTACK) attackFrameTime else moveFrameTime
+            val frameTime = if (u.anim == AnimState.ATTACK) attackFrameTime(u, chosenList.size) else moveFrameTime
             val animClock = if (u.anim == AnimState.ATTACK) u.attackAnimTimer else time
             val idx = ((animClock / frameTime).toInt()) % chosenList.size
             val bmp = chosenList.getOrNull(idx)
-            // Flip horizontal nếu facing LEFT mà chỉ có sheet Right (dựa vào heurstic: nếu folder chứa 'Right_' trong tên attack frames)
-            // Hiện tại loader không cung cấp meta tên file, nên tạm thời không flip tự động ở đây.
             if (bmp != null) {
                 val scaledW = (bmp.width * renderScale)
                 val scaledH = (bmp.height * renderScale)
@@ -70,7 +85,6 @@ class ArmyRenderSystem(
                 )
                 canvas.drawBitmap(bmp, src, dst, paint)
 
-                // Heal effect overlay (Monk cast) if available
                 if (u.anim == AnimState.CAST && frames.healEffect != null) {
                     val effectFrames = frames.healEffect.frames
                     if (effectFrames.isNotEmpty()) {
@@ -91,7 +105,6 @@ class ArmyRenderSystem(
                     }
                 }
             } else {
-                // fallback debug rect 32x32
                 val sx = (u.x - camX - 16).toInt()
                 val sy = (u.y - camY - 32).toInt()
                 canvas.drawRect(sx.toFloat(), sy.toFloat(), (sx+32).toFloat(), (sy+32).toFloat(), dbgPaint)

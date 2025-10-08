@@ -38,6 +38,7 @@ import com.example.empire.game.ui.overlay.WaveHud
 import com.example.empire.audio.SfxManager
 import kotlin.math.abs
 import kotlin.math.sqrt
+import com.example.empire.game.sheep.SheepSystem
 
 class GameView @JvmOverloads constructor(
     context: Context,
@@ -144,6 +145,25 @@ class GameView @JvmOverloads constructor(
     private val shopSystem = ShopSystem(armySystem, unlocks, resources)
     private val unitSprites = UnitSpriteLoader(context).apply { loadAll() }
     private val armyRender = ArmyRenderSystem(armySystem, unitSprites)
+    // Sheep farm system
+    private val sheepSystem = com.example.empire.game.sheep.SheepSystem(context.assets)
+    init {
+        spawnSystem.onEnemyAttackImpact = { enemy ->
+            armySystem.onEnemyAttackImpact(enemy)
+        }
+        // Khởi tạo trang trại cừu (chỉ khi bắt đầu ở main map)
+        if (currentMapId == "main") {
+            val farmW = map.mapWidth * map.tileSize
+            val farmH = map.mapHeight * map.tileSize
+            val margin = 64f
+            sheepSystem.farmLeft = farmW * 0.65f
+            sheepSystem.farmTop = farmH * 0.60f
+            sheepSystem.farmRight = farmW - margin
+            sheepSystem.farmBottom = farmH - margin
+            sheepSystem.load()
+            sheepSystem.spawnSheep(6)
+        }
+    }
 
     // HUD paint
     private val hudPaint = Paint().apply {
@@ -414,9 +434,22 @@ class GameView @JvmOverloads constructor(
         spawnSystem.update(dt)
         enemyRender.update(dt)
         combatSystem.update(dt, playerX, playerY, playerBody.w, playerBody.h)
+        // Player attack -> làm damage lên cừu trong range nếu đang vung kiếm (attackTimer > 0)
+        if (combatSystem.attackTimer > 0f) {
+            val cxAtk = playerX + playerBody.w/2f
+            val cyAtk = playerY + playerBody.h/2f
+            sheepSystem.damageSheep(cxAtk, cyAtk, combatSystem.attackRange, 1) { _, _ -> }
+        }
         armySystem.update(dt, playerX + playerBody.w/2f, playerY + playerBody.h/2f)
         armySystem.postUpdate()
-        armyRender.update(dt)
+    armyRender.update(dt)
+    sheepSystem.update(dt)
+        // Thu thập thịt nếu player đi qua
+        val pcx = playerX + playerBody.w/2f
+        val pcy = playerY + playerBody.h/2f
+        sheepSystem.tryCollect(pcx, pcy, 34f) { pieces ->
+            resources.addMeat(pieces)
+        }
         // Projectiles
         projectileSystem.update(dt)
         handleProjectileCollisions()
@@ -481,8 +514,9 @@ class GameView @JvmOverloads constructor(
         // Enemies
         enemyRender.draw(canvas, camX, camY, scaleFactor)
         // Army
-        armyRender.draw(canvas, camX, camY, scaleFactor)
-        drawProjectiles(canvas)
+    armyRender.draw(canvas, camX, camY, scaleFactor)
+    drawSheep(canvas)
+    drawProjectiles(canvas)
 
         // HUD (vẽ sau cùng, không scale theo world)
         drawHud(canvas)
@@ -741,16 +775,72 @@ class GameView @JvmOverloads constructor(
     // (Removed debug zone drawing code)
 
     // ================= Projectiles =================
-    private val projPaint = Paint().apply { color = Color.YELLOW }
+    private val projPaint = Paint().apply { color = Color.YELLOW } // fallback
+    private var arrowBitmap: Bitmap? = null
+    private fun ensureArrowBitmap() {
+        if (arrowBitmap != null) return
+        // Try load from Archer frames (first available)
+        try {
+            val frames = unitSprites.load(UnitType.ARCHER)
+            arrowBitmap = frames.arrow
+        } catch (_: Exception) { /* ignore */ }
+    }
     private fun drawProjectiles(canvas: Canvas) {
         if (projectileSystem.projectiles.isEmpty()) return
+        ensureArrowBitmap()
+        val arrow = arrowBitmap
         canvas.save()
         canvas.scale(scaleFactor, scaleFactor)
         projectileSystem.projectiles.forEach { p ->
             val sx = (p.x - camX).toFloat()
             val sy = (p.y - camY).toFloat()
-            // simple 4x4 dot
-            canvas.drawRect(sx-2, sy-2, sx+2, sy+2, projPaint)
+            if (arrow != null) {
+                // Determine rotation based on velocity
+                val angle = kotlin.math.atan2(p.vy, p.vx)
+                val scale = 0.55f // thu nhỏ mũi tên
+                val hw = (arrow.width * scale) / 2f
+                val hh = (arrow.height * scale) / 2f
+                val src = android.graphics.Rect(0,0,arrow.width,arrow.height)
+                val dst = android.graphics.Rect((sx - hw).toInt(), (sy - hh).toInt(), (sx + hw).toInt(), (sy + hh).toInt())
+                canvas.save()
+                canvas.translate(sx, sy)
+                canvas.rotate(Math.toDegrees(angle.toDouble()).toFloat())
+                canvas.translate(-sx, -sy)
+                canvas.drawBitmap(arrow, src, dst, null)
+                canvas.restore()
+            } else {
+                canvas.drawRect(sx-2, sy-2, sx+2, sy+2, projPaint)
+            }
+        }
+        canvas.restore()
+    }
+
+    private fun drawSheep(canvas: Canvas) {
+        canvas.save()
+        canvas.scale(scaleFactor, scaleFactor)
+        val paint = Paint()
+        sheepSystem.sheep.forEach { s ->
+            val bmp = sheepSystem.currentFrame(s)
+            if (bmp != null) {
+                val dx = s.x - camX - bmp.width/2f
+                val dy = s.y - camY - bmp.height
+                canvas.drawBitmap(bmp, dx, dy, paint)
+            }
+        }
+        // meat drops
+        val meatBmp = sheepSystem.meatBitmap()
+        if (meatBmp != null) {
+            val scale = 0.2f
+            val w = meatBmp.width * scale
+            val h = meatBmp.height * scale
+            sheepSystem.meatDrops.forEach { d ->
+                if (!d.collected) {
+                    val left = d.x - camX - w/2f
+                    val top = d.y - camY - h/2f
+                    val dst = android.graphics.RectF(left, top, left + w, top + h)
+                    canvas.drawBitmap(meatBmp, null, dst, paint)
+                }
+            }
         }
         canvas.restore()
     }
@@ -832,6 +922,17 @@ class GameView @JvmOverloads constructor(
         armySystem.setTileMap(map)
         spawnSystem.clear()
         spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
+        if (currentMapId == "main") {
+            val farmW = map.mapWidth * map.tileSize
+            val farmH = map.mapHeight * map.tileSize
+            val margin = 64f
+            sheepSystem.farmLeft = farmW * 0.65f
+            sheepSystem.farmTop = farmH * 0.60f
+            sheepSystem.farmRight = farmW - margin
+            sheepSystem.farmBottom = farmH - margin
+            sheepSystem.load()
+            if (sheepSystem.sheep.isEmpty()) sheepSystem.spawnSheep(6)
+        }
         if (target.enemyTypes.isNotEmpty()) {
             spawnSystem.enableWaves(SpawnSystem.WaveConfig(target.enemyTypes, waves = 2, countPerType = 5, cooldownAfter = 20f))
             spawnSystem.setDamageScale(target.damageScale)
