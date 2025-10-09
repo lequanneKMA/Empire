@@ -249,38 +249,38 @@ private fun CircleAttackButton(
         }
     }
 }
-
-@Preview(
-    name = "Controls Overlay – Portrait",
-    showBackground = true,
-    backgroundColor = 0xFF0E1420
-)
-@Composable
-private fun PreviewControlsOverlayPortrait() {
-    Box(Modifier.fillMaxSize().background(Color(0xFF0E1420))) {
-        ControlsOverlay(
-            onDirection = {},
-            onStop = {},
-            onAttackDown = {},
-            onAttackUp = {},
-            onADown = {},
-            onAUp = {},
-            onBDown = {},
-            onBUp = {},
-            onCDown = {},
-            onCUp = {}
-        )
-    }
-}
-
-@Preview(
-    name = "Controls Overlay – Wide",
-    widthDp = 800,
-    heightDp = 400,
-    showBackground = true,
-    backgroundColor = 0xFF0E1420
-)
-@Composable
-private fun PreviewControlsOverlayWide() {
-    PreviewControlsOverlayPortrait()
-}
+//
+//@Preview(
+//    name = "Controls Overlay – Portrait",
+//    showBackground = true,
+//    backgroundColor = 0xFF0E1420
+//)
+//@Composable
+//private fun PreviewControlsOverlayPortrait() {
+//    Box(Modifier.fillMaxSize().background(Color(0xFF0E1420))) {
+//        ControlsOverlay(
+//            onDirection = {},
+//            onStop = {},
+//            onAttackDown = {},
+//            onAttackUp = {},
+//            onADown = {},
+//            onAUp = {},
+//            onBDown = {},
+//            onBUp = {},
+//            onCDown = {},
+//            onCUp = {}
+//        )
+//    }
+//}
+//
+//@Preview(
+//    name = "Controls Overlay – Wide",
+//    widthDp = 800,
+//    heightDp = 400,
+//    showBackground = true,
+//    backgroundColor = 0xFF0E1420
+//)
+//@Composable
+//private fun PreviewControlsOverlayWide() {
+//    PreviewControlsOverlayPortrait()
+//}

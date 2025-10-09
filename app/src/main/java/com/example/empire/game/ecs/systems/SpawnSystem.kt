@@ -8,6 +8,8 @@ class SpawnSystem {
     // Đổi tên rõ ràng theo asset: FLYBEE, MONSTER, SLIME, WOLF
     enum class EnemyType { FLYBEE, MONSTER, SLIME, WOLF }
 
+    enum class AttackTarget { PLAYER, ARMY }
+
     data class Enemy(
         var x: Float,
         var y: Float,
@@ -31,7 +33,9 @@ class SpawnSystem {
         // Knockback
         var kbVX: Float = 0f,
         var kbVY: Float = 0f,
-        var kbTime: Float = 0f
+        var kbTime: Float = 0f,
+        // who this enemy intended to hit when starting an attack
+        var lastAttackTarget: AttackTarget = AttackTarget.PLAYER
     ) {
         enum class Facing { UP, DOWN, LEFT, RIGHT }
         enum class State { IDLE, WALK, ATTACK, DEAD }
@@ -212,6 +216,10 @@ class SpawnSystem {
     var onEnemyAttackImpact: (Enemy) -> Unit = { _ -> }
     var onEnemyDeath: (EnemyType) -> Unit = { _ -> }
 
+    // Query to let enemies prefer nearby army units over the player.
+    // Should return the center (x,y) of the nearest alive army unit within radius, or null if none.
+    var queryNearestArmyCenter: (ex: Float, ey: Float, radius: Float) -> Pair<Float, Float>? = { _, _, _ -> null }
+
     // Damage application centralization
     fun applyDamage(e: Enemy, dmg: Int): Boolean {
         if (!e.alive || e.state == Enemy.State.DEAD) return false
@@ -275,11 +283,23 @@ class SpawnSystem {
                 }
                 return@forEach
             }
-            // Simple distance check
-            val dx = targetX - (e.x + e.w/2f)
-            val dy = targetY - (e.y + e.h/2f)
-            val dist2 = dx*dx + dy*dy
+            // Decide target each frame: prefer nearest army unit if any within chase range
+            val ex = e.x + e.w/2f
+            val ey = e.y + e.h/2f
             val chaseRange = 260f * 260f
+            var targetCx = targetX
+            var targetCy = targetY
+            var targetKind = AttackTarget.PLAYER
+            queryNearestArmyCenter(ex, ey, kotlin.math.sqrt(chaseRange.toFloat())).let { pair ->
+                if (pair != null) {
+                    targetCx = pair.first
+                    targetCy = pair.second
+                    targetKind = AttackTarget.ARMY
+                }
+            }
+            val dx = targetCx - ex
+            val dy = targetCy - ey
+            val dist2 = dx*dx + dy*dy
             val speed = when(e.type){
                 EnemyType.WOLF -> 70f   // tăng hunt cảm giác đe doạ
                 EnemyType.SLIME -> 42f  // nhanh hơn chút
@@ -292,10 +312,13 @@ class SpawnSystem {
                 val triggerTime = attackDuration(e) - attackHitPoint(e)
                 if (!e.attackDidDamage && e.attackTimer <= triggerTime) {
                     e.attackDidDamage = true
-                    // Gây damage lên player
-                    onPlayerHit(e, attackDamage(e))
-                    // Báo impact để ArmySystem xử lý lựa chọn unit trúng
-                    onEnemyAttackImpact(e)
+                    // Gây damage đúng đối tượng đã khoá khi bắt đầu tấn công
+                    if (e.lastAttackTarget == AttackTarget.PLAYER) {
+                        onPlayerHit(e, attackDamage(e))
+                    } else {
+                        // Báo impact để ArmySystem xử lý lựa chọn unit trúng
+                        onEnemyAttackImpact(e)
+                    }
                 }
                 if (e.attackTimer <= 0f) {
                     e.state = Enemy.State.IDLE
@@ -319,6 +342,7 @@ class SpawnSystem {
                             e.state = Enemy.State.ATTACK
                             e.attackTimer = attackDuration(e)
                             e.attackDidDamage = false
+                            e.lastAttackTarget = targetKind
                         } else {
                             e.state = Enemy.State.IDLE
                         }

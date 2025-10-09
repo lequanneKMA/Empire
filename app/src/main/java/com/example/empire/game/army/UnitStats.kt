@@ -10,7 +10,7 @@ package com.example.empire.game.army
      val moveSpeed: Float,
      val range: Float,
      val cooldown: Float,
-     val defense: Int = 0,        // giảm damage nhận vào (đơn giản: dmgTaken = max(1, raw - defense))
+     val defense: Int = 0,
      val isRanged: Boolean = false
  )
 

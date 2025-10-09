@@ -1,24 +1,144 @@
 package com.example.empire.game.ui
 
+import android.content.res.AssetManager
+import android.content.res.Resources
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
-import com.example.empire.game.player.PlayerStats
-import com.example.empire.game.progression.ProgressionManager
+import android.graphics.RectF
+import com.example.empire.R
 import com.example.empire.game.army.ArmySystem
 import com.example.empire.game.economy.ResourceManager
+import com.example.empire.game.player.PlayerStats
+import com.example.empire.game.progression.ProgressionManager
+import android.graphics.Paint.FontMetrics
+import android.content.Context
+import androidx.core.content.res.ResourcesCompat
 
 /**
  * Draws the on-screen HUD (HP, XP, resources, army counts, map name etc.).
  * Extracted from GameView to keep that file smaller.
  */
 class HudRenderer(
+    private val res: Resources,
+    private val assets: AssetManager,
+    private val packageName: String,
     private val hudPaint: Paint,
     private val hpBarPaint: Paint,
     private val hpBarBackPaint: Paint,
     private val xpBarPaint: Paint,
     private val xpBarBackPaint: Paint,
-    private val uiInset: Float
+    private val uiInset: Float,
+    private val context: Context
 ) {
+    private val pixelTypeface = ResourcesCompat.getFont(context, R.font.vt323)
+    init {
+        // Dòng quan trọng nhất: áp dụng font pixel cho bút vẽ HUD
+        hudPaint.typeface = pixelTypeface
+    }
+    // Load drawables by name to tolerate possible naming (hp_bar_full vs hp_bar_Full)
+    private val hpEmptyRaw: Bitmap by lazy {
+        val id1 = res.getIdentifier("hp_bar_empty", "drawable", packageName)
+        val id = if (id1 != 0) id1 else res.getIdentifier("hp_bar_Empty", "drawable", packageName)
+        BitmapFactory.decodeResource(res, id)
+    }
+    private val hpFullRaw: Bitmap by lazy {
+        val id1 = res.getIdentifier("hp_bar_full", "drawable", packageName)
+        val id = if (id1 != 0) id1 else res.getIdentifier("hp_bar_Full", "drawable", packageName)
+        BitmapFactory.decodeResource(res, id)
+    }
+    private var scaledW = 0
+    private var scaledH = 0
+    private var hpEmptyScaled: Bitmap? = null
+    private var hpFullScaled: Bitmap? = null
+
+    // Resource icons and ribbon from assets (with multiple fallbacks)
+    private fun loadAssetBitmap(vararg candidates: String): Bitmap? {
+        for (p in candidates) {
+            try {
+                assets.open(p).use { stream ->
+                    return BitmapFactory.decodeStream(stream)
+                }
+            } catch (_: Exception) {
+                // try next candidate
+            }
+        }
+        return null
+    }
+
+    private val goldRaw: Bitmap? by lazy {
+        loadAssetBitmap(
+            "sprites/spawn/Gold.png",
+        )
+    }
+    private val meatRaw: Bitmap? by lazy {
+        loadAssetBitmap(
+            "sprites/spawn/Meat.png", // Added capitalized version
+        )
+    }
+    private val ribbonRaw: Bitmap? by lazy {
+        loadAssetBitmap(
+            "ui/Ribbon.png"
+        )
+    }
+    // NEW: Load background for Level display
+    private var levelButtonScaled: Bitmap? = null
+    private var levelButtonScaledW = 0
+    private var levelButtonScaledH = 0
+    private val levelButtonRaw: Bitmap? by lazy {
+        loadAssetBitmap(
+            "ui/level_button.png"
+        )
+    }
+
+    private var goldScaled: Bitmap? = null
+    private var meatScaled: Bitmap? = null
+    private var goldScaledH = 0
+    private var meatScaledH = 0
+    private var ribbonScaled: Bitmap? = null
+    private var ribbonScaledW = 0
+    private var ribbonScaledH = 0
+
+
+
+    private fun ensureHpScaled(targetW: Int, targetH: Int) {
+        if (scaledW == targetW && scaledH == targetH && hpEmptyScaled != null && hpFullScaled != null) return
+        hpEmptyScaled = Bitmap.createScaledBitmap(hpEmptyRaw, targetW, targetH, true)
+        hpFullScaled = Bitmap.createScaledBitmap(hpFullRaw, targetW, targetH, true)
+        scaledW = targetW; scaledH = targetH
+    }
+    /**
+     * Hàm phụ để vẽ một mục tài nguyên (icon và chữ)
+     * @return Vị trí X tiếp theo để vẽ mục kế tiếp
+     */
+    private fun drawResourceItem(
+        canvas: Canvas,
+        icon: Bitmap?,
+        text: String,
+        x: Float,
+        y: Float,
+        iconHeight: Int,
+        textGap: Float
+    ): Float {
+        var currentX = x
+        icon?.let {
+            // Tính toán để căn icon và chữ thẳng hàng với nhau theo chiều dọc
+            val iconCenterY = y + it.height / 2f
+            val textBaselineY = iconCenterY - (hudPaint.descent() + hudPaint.ascent()) / 2f
+
+            // Vẽ icon
+            canvas.drawBitmap(it, currentX, y, null)
+            currentX += it.width + textGap // Di chuyển X sang phải
+
+            // Vẽ chữ
+            canvas.drawText(text, currentX, textBaselineY, hudPaint)
+            currentX += hudPaint.measureText(text) // Di chuyển X sang phải
+        }
+        return currentX
+    }
+
     fun draw(
         canvas: Canvas,
         playerStats: PlayerStats,
@@ -26,31 +146,166 @@ class HudRenderer(
         resources: ResourceManager,
         armySystem: ArmySystem,
         currentMapId: String,
-        unlocks: Any, // kept generic; caller can format unlock text before refactor
-        unlockText: String
+        screenW: Int,
+        screenH: Int
     ) {
-        val barW = 140f
-        val barH = 10f
-        val margin = 8f
+        // --- Các biến chung ---
+        val barW = 320f
+        val margin = 16f
         val hpX = margin + uiInset
-        val hpY = margin + uiInset
-        val hpPerc = playerStats.hp / playerStats.maxHp.toFloat()
-        canvas.drawRect(hpX, hpY, hpX + barW, hpY + barH, hpBarBackPaint)
-        canvas.drawRect(hpX, hpY, hpX + barW * hpPerc, hpY + barH, hpBarPaint)
-        canvas.drawText("HP ${playerStats.hp}/${playerStats.maxHp}", hpX, hpY + barH + 14f, hudPaint)
+        var currentY = margin + uiInset
 
-        val xpTop = hpY + barH + 28f
+        // Lưu và khôi phục trạng thái Paint
+        val prevAlign = hudPaint.textAlign
+        val prevSize = hudPaint.textSize
+        val prevBold = hudPaint.isFakeBoldText
+        val prevColor = hudPaint.color
+
+        // --- 1. Thanh máu (Giữ nguyên) ---
+        val barH = 80f
+        ensureHpScaled(barW.toInt(), barH.toInt())
+        // ... (Toàn bộ code vẽ thanh máu được giữ nguyên)
+        val hpPerc = (playerStats.hp.toFloat() / playerStats.maxHp.coerceAtLeast(1)).coerceIn(0f, 1f)
+        hpEmptyScaled?.let { canvas.drawBitmap(it, hpX, currentY, null) }
+        if (hpPerc > 0f) {
+            hpFullScaled?.let {
+                val save = canvas.save()
+                canvas.clipRect(hpX, currentY, hpX + barW * hpPerc, currentY + barH)
+                canvas.drawBitmap(it, hpX, currentY, null)
+                canvas.restoreToCount(save)
+            }
+        }
+        hudPaint.textAlign = Paint.Align.CENTER
+        hudPaint.textSize = 27f
+        hudPaint.isFakeBoldText = true
+        hudPaint.color = Color.WHITE
+        val hpText = "${playerStats.hp}/${playerStats.maxHp}"
+        canvas.drawText(hpText, hpX + barW / 2f, currentY + barH * 0.65f, hudPaint)
+        currentY += barH + margin / 2
+
+
+        // --- 2. Nút hiển thị Level (Mới) ---
+        val levelButtonW = 120f
+        val levelButtonH = 50f
+        if (levelButtonScaled == null || levelButtonScaledW != levelButtonW.toInt() || levelButtonScaledH != levelButtonH.toInt()) {
+            levelButtonRaw?.let {
+                levelButtonScaled = Bitmap.createScaledBitmap(it, levelButtonW.toInt(), levelButtonH.toInt(), true)
+            }
+            levelButtonScaledW = levelButtonW.toInt()
+            levelButtonScaledH = levelButtonH.toInt()
+        }
+        levelButtonScaled?.let {
+            canvas.drawBitmap(it, hpX, currentY, null)
+            hudPaint.textSize = 28f
+            hudPaint.isFakeBoldText = true
+            val levelText = "LV ${progression.tier + 1}"
+            val levelTextY = (currentY + levelButtonH / 2f) - ((hudPaint.descent() + hudPaint.ascent()) / 2f)
+            canvas.drawText(levelText, hpX + levelButtonW / 2f, levelTextY, hudPaint)
+        }
+        currentY += levelButtonH + margin / 2
+
+
+        // --- 3. Thanh kinh nghiệm (Mới) ---
+        val xpBarH = 30f
         val xpNeeded = progression.currentThreshold
-        val xpPerc = if (xpNeeded > 0) (progression.xp.coerceAtMost(xpNeeded) / xpNeeded.toFloat()) else 1f
-        canvas.drawRect(hpX, xpTop, hpX + barW, xpTop + barH, xpBarBackPaint)
-        canvas.drawRect(hpX, xpTop, hpX + barW * xpPerc, xpTop + barH, xpBarPaint)
-        canvas.drawText("XP ${progression.xp}/${xpNeeded} Tier=${progression.tier}", hpX, xpTop + barH + 14f, hudPaint)
+        val xpPerc = if (xpNeeded > 0) (progression.xp.toFloat() / xpNeeded) else 1f
+        canvas.drawRect(hpX, currentY, hpX + barW, currentY + xpBarH, xpBarBackPaint)
+        canvas.drawRect(hpX, currentY, hpX + barW * xpPerc, currentY + xpBarH, xpBarPaint)
+        hudPaint.textSize = 28f
+        hudPaint.isFakeBoldText = false
+        val expText = "EXP ${progression.xp}/${xpNeeded}"
+        val expTextY = (currentY + xpBarH / 2f) - ((hudPaint.descent() + hudPaint.ascent()) / 2f)
+        canvas.drawText(expText, hpX + barW / 2f, expTextY, hudPaint)
+        currentY += xpBarH + margin
 
-        val resY = xpTop + barH + 34f
-        canvas.drawText("Gold: ${resources.gold} Meat: ${resources.meat}", hpX, resY, hudPaint)
-        val counts = armySystem.units.groupingBy { it.type }.eachCount()
-        canvas.drawText("W:${counts[com.example.empire.game.army.UnitType.WARRIOR]?:0} L:${counts[com.example.empire.game.army.UnitType.LANCER]?:0} A:${counts[com.example.empire.game.army.UnitType.ARCHER]?:0} M:${counts[com.example.empire.game.army.UnitType.MONK]?:0}", hpX, resY + 16f, hudPaint)
-        canvas.drawText(unlockText, hpX, resY + 32f, hudPaint)
-        canvas.drawText("Map: $currentMapId", hpX, resY + 48f, hudPaint)
+
+        // --- 4. Hàng tài nguyên (Phiên bản cải tiến, dễ căn chỉnh) ---
+
+// =================== KHU VỰC TÙY CHỈNH CHÍNH ===================
+        val resIconH = 80f       // Chiều cao của icon (giữ nguyên)
+        val resTextSize = 30f    // Cỡ chữ (giữ nguyên)
+        val textVerticalAlign = 0.75f
+        val leftPadding = 0f    // Khoảng cách từ lề trái
+        val textGap = 0f        // Khoảng cách giữa icon và chữ
+        val itemGap = 20f        // Khoảng cách giữa cụm Vàng và cụm Thịt
+// =============================================================
+
+        var resX = hpX + leftPadding
+        hudPaint.textAlign = Paint.Align.LEFT
+        hudPaint.textSize = resTextSize
+        hudPaint.isFakeBoldText = true
+
+// Scale icons (phần này không cần chỉnh)
+        val targetIconH = resIconH.toInt()
+        if (goldScaled == null || goldScaledH != targetIconH) {
+            goldScaled = goldRaw?.let { Bitmap.createScaledBitmap(it, (it.width * (resIconH / it.height)).toInt(), targetIconH, true) }
+            goldScaledH = targetIconH
+        }
+        if (meatScaled == null || meatScaledH != targetIconH) {
+            meatScaled = meatRaw?.let { Bitmap.createScaledBitmap(it, (it.width * (resIconH / it.height)).toInt(), targetIconH, true) }
+            meatScaledH = targetIconH
+        }
+
+// Căn chỉnh Vàng
+        goldScaled?.let {
+            // Logic căn chỉnh mới, đơn giản hơn
+            val textBaselineY = currentY + (it.height * textVerticalAlign)
+
+            canvas.drawBitmap(it, resX, currentY, null)
+            resX += it.width + textGap
+            canvas.drawText("${resources.gold}", resX, textBaselineY, hudPaint)
+            resX += hudPaint.measureText("${resources.gold}") + itemGap
+        }
+
+// Căn chỉnh Thịt
+        meatScaled?.let {
+            // Logic căn chỉnh mới, đơn giản hơn
+            val textBaselineY = currentY + (it.height * textVerticalAlign)
+
+            canvas.drawBitmap(it, resX, currentY, null)
+            resX += it.width + textGap
+            canvas.drawText("${resources.meat}", resX, textBaselineY, hudPaint)
+        }
+
+        // ---- Top Center map ribbon ----
+        val ribbonTargetW = 350
+        if (ribbonScaled == null || ribbonScaledW != ribbonTargetW) {
+            ribbonScaled = ribbonRaw?.let { src ->
+                val scale = ribbonTargetW.toFloat() / src.width
+                val h = (src.height * scale).toInt().coerceAtLeast(1)
+                Bitmap.createScaledBitmap(src, ribbonTargetW, h, true)
+            }
+            ribbonScaledW = ribbonTargetW
+            ribbonScaledH = ribbonScaled?.height ?: 0
+        }
+        ribbonScaled?.let { bmp ->
+            // --- LOGIC CĂN GIỮA MỚI ---
+
+            val leftHudWidth = barW
+            val rightHudWidth = 260f
+            val centerOffset = (leftHudWidth - rightHudWidth) / 2f
+            val visualCx = screenW / 2f + centerOffset
+            val top = margin + uiInset
+            val left = visualCx - bmp.width / 2f // Dùng vị trí trung tâm mới
+            canvas.drawBitmap(bmp, left, top, null)
+
+            val title = if (currentMapId.equals("main", ignoreCase = true)) "Nhà chính" else currentMapId
+            val saveSize = hudPaint.textSize
+            val saveBold = hudPaint.isFakeBoldText
+            val saveAlign2 = hudPaint.textAlign
+
+            hudPaint.textSize = 33f
+            hudPaint.isFakeBoldText = true
+            hudPaint.textAlign = Paint.Align.CENTER
+            hudPaint.color = Color.WHITE
+
+            val yPos = (top + bmp.height / 2f) - ((hudPaint.descent() + hudPaint.ascent()) / 2f) - 4f
+            canvas.drawText(title, visualCx, yPos, hudPaint) // Dùng vị trí trung tâm mới
+
+            hudPaint.textAlign = prevAlign
+            hudPaint.textSize = prevSize
+            hudPaint.isFakeBoldText = prevBold
+            hudPaint.color = prevColor
+        }
     }
 }

@@ -151,6 +151,25 @@ class GameView @JvmOverloads constructor(
         spawnSystem.onEnemyAttackImpact = { enemy ->
             armySystem.onEnemyAttackImpact(enemy)
         }
+        // Enemy target preference: prefer nearby army units over player
+        spawnSystem.queryNearestArmyCenter = { ex, ey, radius ->
+            val r2 = radius * radius
+            var bx: Float? = null
+            var by: Float? = null
+            var bestD2 = Float.MAX_VALUE
+            armySystem.units.forEach { u ->
+                if (u.hp <= 0) return@forEach
+                val dx = u.x - ex
+                val dy = u.y - ey
+                val d2 = dx*dx + dy*dy
+                if (d2 <= r2 && d2 < bestD2) {
+                    bestD2 = d2
+                    bx = u.x
+                    by = u.y
+                }
+            }
+            if (bx != null && by != null) bx!! to by!! else null
+        }
         // Khởi tạo trang trại cừu (chỉ khi bắt đầu ở main map)
         if (currentMapId == "main") {
             val farmW = map.mapWidth * map.tileSize
@@ -209,7 +228,18 @@ class GameView @JvmOverloads constructor(
     private val kbDuration = 0.18f
     // UI safe inset (bo góc màn hình) – small shift inward
     private val uiInset = 14f
-    private val hudRenderer = HudRenderer(hudPaint, hpBarPaint, hpBarBackPaint, xpBarPaint, xpBarBackPaint, uiInset)
+    private val hudRenderer = HudRenderer(
+
+        context.resources,
+        context.assets,
+        context.packageName,
+        hudPaint,
+        hpBarPaint,
+        hpBarBackPaint,
+        xpBarPaint,
+        xpBarBackPaint,
+        uiInset
+    )
     private val waveHud by lazy { WaveHud(hudPaint, uiInset) }
     private fun applyKnockback(fromX: Float, fromY: Float) {
         val px = playerX + playerBody.w/2f
@@ -306,11 +336,11 @@ class GameView @JvmOverloads constructor(
 
         // Load map switch button bitmap
         try {
-            context.assets.open("ui/Buttons/Button_Blue_9Slides.png").use { inS ->
+            context.assets.open("ui/Buttons/button.png").use { inS ->
                 mapBtnBitmap = BitmapFactory.decodeStream(inS)
             }
             // Load pause base (reuse same or different path). If you have custom PNG replace path below.
-            context.assets.open("ui/Buttons/Button_Blue_9Slides.png").use { inS ->
+            context.assets.open("ui/Buttons/button.png").use { inS ->
                 pauseBtnBitmap = BitmapFactory.decodeStream(inS)
             }
         } catch (e: Exception) {
@@ -523,7 +553,6 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawHud(canvas: Canvas) {
-        val unlockText = "Unlock L:${unlocks.lancerUnlocked} A:${unlocks.archerUnlocked} M:${unlocks.monkUnlocked}"
         if (!paused) {
             hudRenderer.draw(
                 canvas,
@@ -532,8 +561,8 @@ class GameView @JvmOverloads constructor(
                 resources,
                 armySystem,
                 currentMapId,
-                unlocks,
-                unlockText
+                width,
+                height
             )
         }
 
@@ -567,14 +596,38 @@ class GameView @JvmOverloads constructor(
         pauseButtonRect.set(width - mapW - pauseW - spacing - marginR, marginT, width - mapW - spacing - marginR, marginT + pauseH)
         mapBtnScaled?.let { canvas.drawBitmap(it, mapButtonRect.left, mapButtonRect.top, null) }
         pauseBtnScaled?.let { canvas.drawBitmap(it, pauseButtonRect.left, pauseButtonRect.top, null) }
-        // overlay pressed shade
+// overlay pressed shade
         if (mapBtnPressed) canvas.drawRect(mapButtonRect, Paint().apply { color = Color.argb(90,0,0,0) })
         if (pauseBtnPressed) canvas.drawRect(pauseButtonRect, Paint().apply { color = Color.argb(90,0,0,0) })
-        // Draw labels
-        hudPaint.textSize = 20f
-        val mapText = if (!mapOverlay.visible) "MAP" else maps.getOrNull(mapOverlay.selectedIndex)?.id?.uppercase() ?: "?"
-        val mapTextW = hudPaint.measureText(mapText)
-        canvas.drawText(mapText, mapButtonRect.centerX() - mapTextW/2f, mapButtonRect.centerY() + 8f, hudPaint)
+
+// --- Vẽ icon chuyển đổi cho nút MAP ---
+        val iconPaint = Paint().apply {
+            color = Color.WHITE
+            strokeWidth = 5f
+            isAntiAlias = true
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+        }
+        val cx = mapButtonRect.centerX()
+        val cy = mapButtonRect.centerY()
+        val radius = mapButtonRect.width() * 0.25f
+        val arcRect = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
+
+// Mũi tên cong ở trên
+        canvas.drawArc(arcRect, 270f, 135f, false, iconPaint)
+        val angle1 = Math.toRadians(45.0)
+        val arrowX1 = cx + (radius * Math.cos(angle1)).toFloat()
+        val arrowY1 = cy + (radius * Math.sin(angle1)).toFloat()
+        canvas.drawLine(arrowX1, arrowY1, arrowX1 - 15f, arrowY1 - 5f, iconPaint)
+        canvas.drawLine(arrowX1, arrowY1, arrowX1 - 5f, arrowY1 - 15f, iconPaint)
+
+// Mũi tên cong ở dưới
+        canvas.drawArc(arcRect, 90f, 135f, false, iconPaint)
+        val angle2 = Math.toRadians(225.0)
+        val arrowX2 = cx + (radius * Math.cos(angle2)).toFloat()
+        val arrowY2 = cy + (radius * Math.sin(angle2)).toFloat()
+        canvas.drawLine(arrowX2, arrowY2, arrowX2 + 15f, arrowY2 + 5f, iconPaint)
+        canvas.drawLine(arrowX2, arrowY2, arrowX2 + 5f, arrowY2 + 15f, iconPaint)
         // Pause icon (two rectangles) drawn over pause button
         val barW = pauseButtonRect.width()*0.18f
         val gap = barW*0.6f
@@ -582,7 +635,6 @@ class GameView @JvmOverloads constructor(
         val barTop = pauseButtonRect.centerY() - barH/2f
         val barLeft1 = pauseButtonRect.centerX() - gap/2f - barW
         val barLeft2 = pauseButtonRect.centerX() + gap/2f
-        val iconPaint = Paint().apply { color = Color.WHITE }
         canvas.drawRoundRect(RectF(barLeft1, barTop, barLeft1+barW, barTop+barH), 6f,6f, iconPaint)
         canvas.drawRoundRect(RectF(barLeft2, barTop, barLeft2+barW, barTop+barH), 6f,6f, iconPaint)
         hudPaint.textSize = 14f
