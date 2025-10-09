@@ -8,6 +8,7 @@ import android.view.SurfaceView
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.os.SystemClock
+import com.example.empire.data.SaveManager
 import com.example.empire.game.map.MapLoader
 import com.example.empire.game.map.MapRenderer
 import com.example.empire.game.map.TileMap
@@ -74,7 +75,14 @@ class GameView @JvmOverloads constructor(
         // Map5: final all types ( + future boss )
         WorldMap("final",  "maps/final.json",     "maps/tile_final.png",  listOf(SpawnSystem.EnemyType.MONSTER, SpawnSystem.EnemyType.WOLF, SpawnSystem.EnemyType.SLIME, SpawnSystem.EnemyType.FLYBEE), levelRequired = 5, damageScale = 1.65f)
     )
-    private var currentMapIndex = 0
+    // Save system
+    private val saveManager = SaveManager(context)
+    private val savedState = saveManager.load()
+
+    private var currentMapIndex = savedState?.let { st ->
+        val idxById = maps.indexOfFirst { it.id == st.mapId }
+        if (idxById >= 0) idxById else st.mapIndex
+    } ?: 0
     private var currentMapId = maps[currentMapIndex].id
     private var map: TileMap = MapLoader.loadFromAssets(context, maps[currentMapIndex].file, maps[currentMapIndex].tileset)
     private var mapRenderer = MapRenderer(map)
@@ -90,8 +98,13 @@ class GameView @JvmOverloads constructor(
         val (tx, ty) = spawn ?: (10 to 5) // fallback
         val (cx, cy) = map.tileCenter(tx, ty)
         // căn body 40x40 ở giữa tileSize
-        playerX = cx - 20f
-        playerY = cy - 20f
+        val (initX, initY) = if (savedState != null) {
+            savedState.playerX to savedState.playerY
+        } else {
+            (cx - 20f) to (cy - 20f)
+        }
+        playerX = initX
+        playerY = initY
     }
     // Nerf player movement speed so enemy có cơ hội áp sát
     private val moveSpeed = 120f // px/s (giảm từ 180)
@@ -132,16 +145,34 @@ class GameView @JvmOverloads constructor(
     private val enemyRender = EnemyRenderSystem(spawnSystem, enemySprites)
     private val combatSystem = CombatSystem(spawnSystem)
     // progression & stats
-    private val progression = ProgressionManager(intArrayOf(50))
+    private val progression = ProgressionManager(intArrayOf(50)).also {
+        // Restore progression from save (recompute from totalXp)
+        savedState?.let { st ->
+            it.reset()
+            if (st.totalXp > 0) it.addXp(st.totalXp)
+        }
+    }
     // Nerf: giảm lại HP player để combat lâu nhưng không quá bất tử
     private val playerStats = PlayerStats(maxHp = 60)
 
     // economy & army
     // Use ResourceManager defaults so changing its companion constants auto-updates starting values
-    private val resources = ResourceManager()
+    private val resources = ResourceManager(
+        startGold = savedState?.gold ?: ResourceManager.DEFAULT_START_GOLD,
+        startMeat = savedState?.meat ?: ResourceManager.DEFAULT_START_MEAT
+    )
     private val projectileSystem = ProjectileSystem()
     private val armySystem = ArmySystem(resources, spawnSystem, projectileSystem)
-    private val unlocks = Unlocks()
+    private val unlocks = Unlocks().also {
+        savedState?.let { st ->
+            it.warriorsBought = st.warriorsBought
+            it.lancerUnlocked = st.lancerUnlocked
+            it.archerUnlocked = st.archerUnlocked
+            it.monkUnlocked = st.monkUnlocked
+            // Ensure derived unlocks are applied if conditions exceeded
+            it.evaluate(progression.totalXp, progression.tier)
+        }
+    }
     private val shopSystem = ShopSystem(armySystem, unlocks, resources)
     private val unitSprites = UnitSpriteLoader(context).apply { loadAll() }
     private val armyRender = ArmyRenderSystem(armySystem, unitSprites)
@@ -195,6 +226,16 @@ class GameView @JvmOverloads constructor(
             sheepSystem.spawnSheep(5)
             sheepSpawnTimer = sheepSpawnPeriod
         }
+
+        // Restore army from save after systems are ready
+        savedState?.army?.takeIf { it.isNotEmpty() }?.let { list ->
+            armySystem.setTileMap(map)
+            val restored = list.map { su ->
+                val type = try { UnitType.valueOf(su.type) } catch (_: Exception) { UnitType.WARRIOR }
+                UnitEntity(su.x, su.y, type, UnitStatTable.get(type), hp = su.hp)
+            }
+            armySystem.restoreUnits(restored)
+        }
     }
 
     // HUD paint
@@ -227,12 +268,13 @@ class GameView @JvmOverloads constructor(
     @Volatile private var cEdge = false
 
     // ================= UI State (Main House prompt & Buy menu) =================
-    private enum class UiState { NONE, GAME_OVER }
+    private enum class UiState { NONE, GAME_OVER, WINNER }
     private var uiState = UiState.NONE
     private var wasInsideMainHouse = false
     private val mapOverlay by lazy { MapSelectOverlay(panelPaint, panelBorder, highlightPaint, hudPaint, uiInset) }
     private val buyOverlay by lazy { BuyMenuOverlay(panelPaint, panelBorder, highlightPaint, hudPaint, uiInset) }
     private val gameOverOverlay by lazy { GameOverOverlay(panelPaint, panelBorder, hudPaint, uiInset) }
+    private val winnerOverlay by lazy { com.example.empire.game.ui.overlay.WinnerOverlay(panelPaint, panelBorder, hudPaint, uiInset) }
     private val housePromptOverlay by lazy { HousePromptOverlay(panelPaint, panelBorder, hudPaint, uiInset) }
     // Knockback
     private var kbX = 0f
@@ -305,8 +347,9 @@ class GameView @JvmOverloads constructor(
     private var pauseBtnPressed = false
     private var paused = false
     var onPauseChange: ((Boolean) -> Unit)? = null // callback ra Compose khi pause đổi từ bên trong
+    var onGameOverExit: (() -> Unit)? = null // callback yêu cầu thoát về Start khi ở GAME_OVER và nhấn B
     // Gating: phải clear đủ 2 wave (1 cycle) map trước mới mở map tiếp theo
-    private var highestClearedMapIndex = 0
+    private var highestClearedMapIndex = savedState?.highestClearedMapIndex ?: 0
 
     init {
         holder.addCallback(this)
@@ -323,7 +366,10 @@ class GameView @JvmOverloads constructor(
             }
             val upgraded = progression.addXp(gained)
             println("Enemy killed: $type +$gained XP (total=${progression.xp})")
-            if (upgraded) println("UPGRADE! Attack tier = ${progression.tier}")
+            if (upgraded) {
+                println("UPGRADE! Attack tier = ${progression.tier}")
+                saveGame()
+            }
             unlocks.evaluate(progression.totalXp, progression.tier)
         }
 
@@ -332,6 +378,13 @@ class GameView @JvmOverloads constructor(
             if (currentMapIndex > highestClearedMapIndex) {
                 highestClearedMapIndex = currentMapIndex
                 println("[PROGRESS] Map $currentMapId cleared. highestCleared=$highestClearedMapIndex")
+                saveGame()
+            }
+            // Nếu clear map cuối cùng coi như thắng boss.
+            if (currentMapIndex == maps.lastIndex) {
+                uiState = UiState.WINNER
+                winnerOverlay.show()
+                println("[WINNER] Chúc mừng! Nhấn A để về Main Menu")
             }
         }
 
@@ -342,7 +395,8 @@ class GameView @JvmOverloads constructor(
                 applyKnockback(enemy.x + enemy.w/2f, enemy.y + enemy.h/2f)
                 if (playerStats.isDead) {
                     uiState = UiState.GAME_OVER
-                    println("Player died -> GAME OVER")
+                    println("Player died -> GAME OVER. Nhấn A để hồi sinh về main map, nhấn B để về Start.")
+                    gameOverOverlay.show()
                 }
             }
             SfxManager.playEnemyAttack(enemy.type.name)
@@ -373,6 +427,29 @@ class GameView @JvmOverloads constructor(
             override fun onBuy(type: UnitType) { attemptBuy(type) }
             override fun onClose() { buyOverlay.close() }
         }
+
+        // If we loaded into a non-main map from save, ensure wave config is applied
+        if (currentMapId != "main") {
+            val target = maps[currentMapIndex]
+            spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
+            if (target.enemyTypes.isNotEmpty()) {
+                spawnSystem.enableWaves(
+                    SpawnSystem.WaveConfig(
+                        target.enemyTypes,
+                        waves = 2,
+                        countPerType = 5,
+                        cooldownAfter = 20f
+                    )
+                )
+                spawnSystem.setDamageScale(target.damageScale)
+                spawnSystem.setAutoSpawnEnabled(false)
+            } else {
+                spawnSystem.disableWaves()
+                spawnSystem.setAutoSpawnEnabled(false)
+                spawnSystem.setDamageScale(1f)
+            }
+            sheepSystem.clearAll()
+        }
     }
 
     // =========================================================
@@ -384,6 +461,8 @@ class GameView @JvmOverloads constructor(
     }
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) = Unit
     override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // Persist on exit
+        saveGame()
         running = false
         gameThread?.join(500)
         gameThread = null
@@ -431,7 +510,7 @@ class GameView @JvmOverloads constructor(
             val t = (kbTime / kbDuration).coerceIn(0f,1f)
             playerBody.vx = kbX * t
             playerBody.vy = kbY * t
-        } else if (uiState == UiState.GAME_OVER) {
+        } else if (uiState == UiState.GAME_OVER || uiState == UiState.WINNER) {
             playerBody.vx = 0f; playerBody.vy = 0f
         } else {
             // Chuyển input sang velocity cho physics
@@ -504,6 +583,7 @@ class GameView @JvmOverloads constructor(
         val pcy = playerY + playerBody.h/2f
         sheepSystem.tryCollect(pcx, pcy, 34f) { pieces ->
             resources.addMeat(pieces)
+            saveGame()
         }
         // Projectiles
         projectileSystem.update(dt)
@@ -672,7 +752,8 @@ class GameView @JvmOverloads constructor(
             currentMapIndex
         )
         buyOverlay.draw(canvas, resources, unlocks)
-        if (uiState == UiState.GAME_OVER) gameOverOverlay.draw(canvas)
+    if (uiState == UiState.GAME_OVER) gameOverOverlay.draw(canvas)
+    if (uiState == UiState.WINNER) winnerOverlay.draw(canvas, context.assets)
     housePromptOverlay.draw(canvas)
     waveHud.draw(
             canvas,
@@ -703,6 +784,7 @@ class GameView @JvmOverloads constructor(
         if (success) {
             println("[SHOP] Bought $type -> Gold=${resources.gold}, Meat=${resources.meat}")
             unlocks.evaluate(progression.totalXp, progression.tier)
+            saveGame()
         } else {
             val can = shopSystem.canBuy(type)
             val aff = shopSystem.affordable(type)
@@ -794,7 +876,8 @@ class GameView @JvmOverloads constructor(
                     buyOverlay.visible -> buyOverlay.confirm(resources, unlocks)
                 }
             }
-            UiState.GAME_OVER -> respawnPlayer()
+            UiState.GAME_OVER -> respawnToMain()
+            UiState.WINNER -> { onGameOverExit?.invoke() }
         }
     }
 
@@ -807,47 +890,110 @@ class GameView @JvmOverloads constructor(
                     housePromptOverlay.visible -> housePromptOverlay.hide()
                 }
             }
-            UiState.GAME_OVER -> { /* future: maybe quit */ }
+            UiState.GAME_OVER -> { onGameOverExit?.invoke() }
+            UiState.WINNER -> { onGameOverExit?.invoke() }
         }
     }
 
-    private fun respawnPlayer() {
-        // Ensure we are on main map after respawn (no enemies there)
-        if (currentMapId != "main") {
-            val mainMapDef = maps.firstOrNull() // index 0 is main
-            if (mainMapDef != null) {
-                currentMapIndex = 0
-                currentMapId = mainMapDef.id
-                map = MapLoader.loadFromAssets(context, mainMapDef.file, mainMapDef.tileset)
-                mapRenderer = MapRenderer(map)
-                renderSystem.setRenderer(mapRenderer)
-                physics = PhysicsSystem(map)
-                spawnSystem.clear()
-                spawnSystem.disableWaves()
-                spawnSystem.setAutoSpawnEnabled(false)
-                spawnSystem.setDamageScale(1f)
-                spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
-                spawnSystem.setTileMap(map) // ensure enemy collision uses new main map after respawn
-                armySystem.setTileMap(map)
-            }
-        }
+    private fun respawnToMain() {
+        // Chuyển về main map và hồi sinh tại spawn, giữ nguyên vàng & thịt (không đụng ResourceManager)
+        val main = maps.first()
+        currentMapIndex = 0
+        currentMapId = main.id
+        map = MapLoader.loadFromAssets(context, main.file, main.tileset)
+        mapRenderer = MapRenderer(map)
+        renderSystem.setRenderer(mapRenderer)
+        physics = PhysicsSystem(map)
+        spawnSystem.clear()
+        spawnSystem.setTileMap(map)
+        spawnSystem.disableWaves()
+        spawnSystem.setAutoSpawnEnabled(false)
+        spawnSystem.setDamageScale(1f)
+        spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
+        armySystem.setTileMap(map)
+        armySystem.clear()
+        // Setup sheep farm again
+        setSheepFarmBounds()
+        sheepSystem.load()
+        if (sheepSystem.sheep.isEmpty()) sheepSystem.spawnSheep(5)
+        sheepSpawnTimer = sheepSpawnPeriod
+
         // Reset stats
         playerStats.reset()
-        // Clear army
-        armySystem.clear()
-        // Reposition at player spawn of main map
-        val spawn = map.getSpawn("player") ?: (10 to 5)
-        val (tx, ty) = spawn
+        val (tx, ty) = map.getSpawn("player") ?: (10 to 5)
         val (cx, cy) = map.tileCenter(tx, ty)
         playerX = cx - 20f
         playerY = cy - 20f
         playerBody.x = playerX
         playerBody.y = playerY
-        // Clear knockback
+        // Clear knockback & UI
         kbTime = 0f; kbX = 0f; kbY = 0f
-        // Back to normal gameplay
+        gameOverOverlay.hide()
+        winnerOverlay.hide()
         uiState = UiState.NONE
-        println("Player respawned: HP=${playerStats.hp}, army cleared")
+        println("[RESPAWN] Hồi sinh về main map. HP=${playerStats.hp}, giữ nguyên tài nguyên.")
+        saveGame()
+    }
+
+    // Áp dụng trạng thái vừa load từ save slot khi đang ở giữa game
+    fun applyLoadedState(st: SaveManager.SaveState) {
+        // Map selection by id preferred
+        val idxById = maps.indexOfFirst { it.id == st.mapId }
+        currentMapIndex = if (idxById >= 0) idxById else st.mapIndex.coerceIn(0, maps.lastIndex)
+        currentMapId = maps[currentMapIndex].id
+        val target = maps[currentMapIndex]
+        map = MapLoader.loadFromAssets(context, target.file, target.tileset)
+        mapRenderer = MapRenderer(map)
+        renderSystem.setRenderer(mapRenderer)
+        physics = PhysicsSystem(map)
+
+        // Waves / sheep per map
+        spawnSystem.clear()
+        spawnSystem.setTileMap(map)
+        spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
+        if (currentMapId == "main") {
+            spawnSystem.disableWaves(); spawnSystem.setAutoSpawnEnabled(false); spawnSystem.setDamageScale(1f)
+            setSheepFarmBounds(); sheepSystem.load(); if (sheepSystem.sheep.isEmpty()) sheepSystem.spawnSheep(5); sheepSpawnTimer = sheepSpawnPeriod
+        } else {
+            sheepSystem.clearAll()
+            if (target.enemyTypes.isNotEmpty()) {
+                spawnSystem.enableWaves(SpawnSystem.WaveConfig(target.enemyTypes, waves = 2, countPerType = 5, cooldownAfter = 20f))
+                spawnSystem.setDamageScale(target.damageScale)
+                spawnSystem.setAutoSpawnEnabled(false)
+            } else {
+                spawnSystem.disableWaves(); spawnSystem.setAutoSpawnEnabled(false); spawnSystem.setDamageScale(1f)
+            }
+        }
+
+        // Progression & unlocks
+        progression.reset(); if (st.totalXp > 0) progression.addXp(st.totalXp)
+        unlocks.warriorsBought = st.warriorsBought
+        unlocks.lancerUnlocked = st.lancerUnlocked
+        unlocks.archerUnlocked = st.archerUnlocked
+        unlocks.monkUnlocked = st.monkUnlocked
+        unlocks.evaluate(progression.totalXp, progression.tier)
+
+        // Resources
+        resources.setResources(st.gold, st.meat)
+
+        // Player position
+        playerX = st.playerX; playerY = st.playerY
+        playerBody.x = playerX; playerBody.y = playerY
+
+        // Army restore
+        val restored = st.army.map { su ->
+            val type = try { UnitType.valueOf(su.type) } catch (_: Exception) { UnitType.WARRIOR }
+            UnitEntity(su.x, su.y, type, UnitStatTable.get(type), hp = su.hp)
+        }
+        armySystem.setTileMap(map)
+        armySystem.restoreUnits(restored)
+
+        // Clear UI overlays & states
+        mapOverlay.hide(); buyOverlay.close(); gameOverOverlay.hide(); winnerOverlay.hide()
+        uiState = UiState.NONE
+        kbTime = 0f; kbX = 0f; kbY = 0f
+        highestClearedMapIndex = st.highestClearedMapIndex
+        println("[LOAD] Áp dụng save: map=${st.mapId} lv=${progression.tier+1} gold=${resources.gold} meat=${resources.meat}")
     }
 
     // Expose for overlay binding (call these instead of pressA/pressB old)
@@ -1053,6 +1199,7 @@ class GameView @JvmOverloads constructor(
             u.y = playerY + 20f + kotlin.math.sin(angle) * radius
         }
         mapOverlay.hide()
+        saveGame()
     }
 
     fun setPausedFromCompose(p: Boolean) { // gọi từ Compose -> không callback để tránh vòng lặp
@@ -1062,11 +1209,48 @@ class GameView @JvmOverloads constructor(
     private fun togglePauseInternal() {
         paused = !paused
         onPauseChange?.invoke(paused)
+        if (paused) saveGame()
     }
     fun forcePause(value: Boolean) {
         if (paused != value) {
             paused = value
             onPauseChange?.invoke(paused)
+        }
+    }
+
+    // Persist current run state to SharedPreferences (JSON) via SaveManager
+    private fun saveGame() {
+        try {
+            // Capture army snapshot
+            val armySnapshot = armySystem.units.map { u ->
+                com.example.empire.data.SaveManager.SaveUnit(
+                    type = u.type.name,
+                    x = u.x,
+                    y = u.y,
+                    hp = u.hp
+                )
+            }
+            val state = SaveManager.SaveState(
+                mapIndex = currentMapIndex,
+                mapId = currentMapId,
+                playerX = playerX,
+                playerY = playerY,
+                gold = resources.gold,
+                meat = resources.meat,
+                tier = progression.tier,
+                xp = progression.xp,
+                totalXp = progression.totalXp,
+                highestClearedMapIndex = highestClearedMapIndex,
+                warriorsBought = unlocks.warriorsBought,
+                lancerUnlocked = unlocks.lancerUnlocked,
+                archerUnlocked = unlocks.archerUnlocked,
+                monkUnlocked = unlocks.monkUnlocked,
+                army = armySnapshot
+            )
+            saveManager.save(state)
+            println("[SAVE] Game saved: map=${state.mapId} idx=${state.mapIndex} gold=${state.gold} meat=${state.meat} xp=${state.totalXp}")
+        } catch (e: Exception) {
+            println("[SAVE][ERR] ${e.message}")
         }
     }
 }

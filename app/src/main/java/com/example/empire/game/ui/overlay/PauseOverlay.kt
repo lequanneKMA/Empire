@@ -34,7 +34,7 @@ fun PauseOverlay(
             Spacer(Modifier.height(14.dp))
             McButton("Cài đặt") { onSettings() }
             Spacer(Modifier.height(14.dp))
-            McButton("Thoát") { onExit() }
+            McButton("Menu") { onExit() }
         }
     }
 }

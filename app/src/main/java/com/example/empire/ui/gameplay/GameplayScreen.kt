@@ -29,6 +29,13 @@ fun GameplayScreen(nav: NavController) {
     // Lắng nghe thay đổi pause từ GameView (phím P hoặc nút pause trong canvas)
     LaunchedEffect(gameView) {
         gameView.onPauseChange = { p -> paused = p }
+        gameView.onGameOverExit = {
+            GameViewHolder.gameView = null
+            nav.navigate(Screen.Start.route) {
+                popUpTo(Screen.Start.route) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
     }
 
     // Khi quay lại từ Settings, nếu có cờ returnToPause thì bật lại Pause overlay
@@ -78,7 +85,11 @@ fun GameplayScreen(nav: NavController) {
             },
             onExit = {
                 GameViewHolder.gameView = null
-                nav.popBackStack()
+                // Điều hướng về Start screen
+                nav.navigate(Screen.Start.route) {
+                    popUpTo(Screen.Start.route) { inclusive = true }
+                    launchSingleTop = true
+                }
             }
         )
     }

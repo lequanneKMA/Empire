@@ -3,6 +3,7 @@ package com.example.empire.ui.start
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -12,9 +13,14 @@ import androidx.navigation.NavController
 import com.example.empire.R
 import com.example.empire.ui.Screen                // <-- dùng Screen.route
 import com.example.empire.ui.common.McButton
+import androidx.compose.ui.platform.LocalContext
+import com.example.empire.data.SaveManager
+import com.example.empire.ui.gameplay.GameViewHolder
 
 @Composable
 fun StartScreen(nav: NavController) {
+    val ctx = LocalContext.current
+    val sm = remember { SaveManager(ctx) }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         Image(
             painter = painterResource(R.drawable.bg_pixel),
@@ -31,9 +37,14 @@ fun StartScreen(nav: NavController) {
                 .padding(top = yBelowTitle),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            McButton("Bắt đầu") { nav.navigate(Screen.Gameplay.route) }
+            McButton("Bắt đầu") {
+                // New Game: clear in-memory GameView and persistent Save
+                GameViewHolder.gameView = null
+                sm.clear()
+                nav.navigate(Screen.Gameplay.route)
+            }
             Spacer(Modifier.height(13.dp))
-            McButton("Tiếp tục") { nav.navigate(Screen.SelectSave.route) }
+            McButton("Load") { nav.navigate(Screen.SelectSave.route) }
             Spacer(Modifier.height(13.dp))
             McButton("Cài đặt") { nav.navigate(Screen.Settings.route) }
             Spacer(Modifier.height(13.dp))

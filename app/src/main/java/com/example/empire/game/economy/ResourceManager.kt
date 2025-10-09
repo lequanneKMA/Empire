@@ -8,8 +8,8 @@ class ResourceManager(
     startGold: Int = DEFAULT_START_GOLD,
     startMeat: Int = DEFAULT_START_MEAT
 ) {
-    var gold: Int = startGold; public set
-    var meat: Int = startMeat; public set
+    var gold: Int = startGold; private set
+    var meat: Int = startMeat; private set
 
     fun addGold(v: Int) { if (v>0) gold += v }
     fun addMeat(v: Int) { if (v>0) meat += v }
@@ -21,6 +21,11 @@ class ResourceManager(
         meat -= cost.meat
         return true
     }
+
+    // Restore helpers for loading from save
+    fun setGold(value: Int) { gold = value.coerceAtLeast(0) }
+    fun setMeat(value: Int) { meat = value.coerceAtLeast(0) }
+    fun setResources(gold: Int, meat: Int) { setGold(gold); setMeat(meat) }
 
     companion object {
         // Central config for starting resources. Change here -> affects all new games (unless explicitly overridden).

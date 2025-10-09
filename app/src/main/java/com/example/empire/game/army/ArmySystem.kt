@@ -52,6 +52,11 @@ class ArmySystem(
 
     fun clear() { _units.clear(); dmgPopups.clear() }
     fun clearDamagePopups() { dmgPopups.clear() }
+    fun restoreUnits(units: List<UnitEntity>) {
+        _units.clear()
+        dmgPopups.clear()
+        _units.addAll(units)
+    }
 
     var maxUnits = 20
 
