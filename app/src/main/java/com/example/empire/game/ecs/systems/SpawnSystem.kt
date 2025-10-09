@@ -267,7 +267,7 @@ class SpawnSystem {
         EnemyType.FLYBEE -> 0.65f
     }
     private fun attackDuration(e: Enemy): Float = when(e.type){
-        EnemyType.FLYBEE -> 0.5f // nhanh hơn
+        EnemyType.FLYBEE -> 0.5f 
         else -> 0.6f
     }
     private fun attackHitPoint(e: Enemy): Float = 0.3f // seconds into animation (FlyBee vẫn dùng)

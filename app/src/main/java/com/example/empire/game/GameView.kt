@@ -68,11 +68,11 @@ class GameView @JvmOverloads constructor(
         // Map2: Samac desert (SLIME + MONSTER)
         WorldMap("samac",  "maps/samac.json",      "maps/tile_samac.png",   listOf(SpawnSystem.EnemyType.SLIME, SpawnSystem.EnemyType.MONSTER), levelRequired = 2, damageScale = 1.15f),
         // Map3: mixed set 1
-        WorldMap("mix1",   "maps/forest.json",     "maps/tile_forest.png",  listOf(SpawnSystem.EnemyType.WOLF, SpawnSystem.EnemyType.FLYBEE, SpawnSystem.EnemyType.SLIME), levelRequired = 3, damageScale = 1.30f),
+        WorldMap("mix1",   "maps/mix1.json",     "maps/tile_mix1.png",  listOf(SpawnSystem.EnemyType.WOLF, SpawnSystem.EnemyType.FLYBEE, SpawnSystem.EnemyType.SLIME), levelRequired = 3, damageScale = 1.30f),
         // Map4: mixed set 2
-    WorldMap("mix2",   "maps/forest.json",     "maps/tile_forest.png",  listOf(SpawnSystem.EnemyType.MONSTER, SpawnSystem.EnemyType.WOLF, SpawnSystem.EnemyType.SLIME), levelRequired = 4, damageScale = 1.45f),
+        WorldMap("mix2",   "maps/mix2.json",     "maps/tile_mix2.png",  listOf(SpawnSystem.EnemyType.MONSTER, SpawnSystem.EnemyType.WOLF, SpawnSystem.EnemyType.SLIME), levelRequired = 4, damageScale = 1.45f),
         // Map5: final all types ( + future boss )
-        WorldMap("final",  "maps/forest.json",     "maps/tile_forest.png",  listOf(SpawnSystem.EnemyType.MONSTER, SpawnSystem.EnemyType.WOLF, SpawnSystem.EnemyType.SLIME, SpawnSystem.EnemyType.FLYBEE), levelRequired = 5, damageScale = 1.65f)
+        WorldMap("final",  "maps/final.json",     "maps/tile_final.png",  listOf(SpawnSystem.EnemyType.MONSTER, SpawnSystem.EnemyType.WOLF, SpawnSystem.EnemyType.SLIME, SpawnSystem.EnemyType.FLYBEE), levelRequired = 5, damageScale = 1.65f)
     )
     private var currentMapIndex = 0
     private var currentMapId = maps[currentMapIndex].id
@@ -147,6 +147,24 @@ class GameView @JvmOverloads constructor(
     private val armyRender = ArmyRenderSystem(armySystem, unitSprites)
     // Sheep farm system
     private val sheepSystem = com.example.empire.game.sheep.SheepSystem(context.assets)
+    // Sheep spawn rules (main map only)
+    private val sheepSpawnPeriod = 20f
+    private val sheepSpawnBatch = 5
+    private val sheepMaxAlive = 15
+    private var sheepSpawnTimer = sheepSpawnPeriod
+    // Farm placement 
+    private var sheepFarmLeftFrac = 0.67f   // tỉ lệ bề rộng từ mép trái (0.0..1.0)
+    private var sheepFarmTopFrac = 0.6f    // tỉ lệ chiều cao từ mép trên (0.0..1.0)
+    private var sheepFarmRightMargin = 64f  // lề phải (px)
+    private var sheepFarmBottomMargin = 64f // lề dưới (px)
+    private fun setSheepFarmBounds() {
+        val farmW = map.mapWidth * map.tileSize
+        val farmH = map.mapHeight * map.tileSize
+        sheepSystem.farmLeft   = farmW * sheepFarmLeftFrac
+        sheepSystem.farmTop    = farmH * sheepFarmTopFrac
+        sheepSystem.farmRight  = farmW - sheepFarmRightMargin
+        sheepSystem.farmBottom = farmH - sheepFarmBottomMargin
+    }
     init {
         spawnSystem.onEnemyAttackImpact = { enemy ->
             armySystem.onEnemyAttackImpact(enemy)
@@ -172,15 +190,10 @@ class GameView @JvmOverloads constructor(
         }
         // Khởi tạo trang trại cừu (chỉ khi bắt đầu ở main map)
         if (currentMapId == "main") {
-            val farmW = map.mapWidth * map.tileSize
-            val farmH = map.mapHeight * map.tileSize
-            val margin = 64f
-            sheepSystem.farmLeft = farmW * 0.65f
-            sheepSystem.farmTop = farmH * 0.60f
-            sheepSystem.farmRight = farmW - margin
-            sheepSystem.farmBottom = farmH - margin
+            setSheepFarmBounds()
             sheepSystem.load()
-            sheepSystem.spawnSheep(6)
+            sheepSystem.spawnSheep(5)
+            sheepSpawnTimer = sheepSpawnPeriod
         }
     }
 
@@ -238,7 +251,8 @@ class GameView @JvmOverloads constructor(
         hpBarBackPaint,
         xpBarPaint,
         xpBarBackPaint,
-        uiInset
+        uiInset,
+        context
     )
     private val waveHud by lazy { WaveHud(hudPaint, uiInset) }
     private fun applyKnockback(fromX: Float, fromY: Float) {
@@ -298,7 +312,7 @@ class GameView @JvmOverloads constructor(
         holder.addCallback(this)
         isFocusable = true
 
-        // Combat hooks
+    // Combat hooks
         combatSystem.tierProvider = { progression.tier }
         combatSystem.onEnemyKilled = { type ->
             val gained = when(type){
@@ -310,11 +324,9 @@ class GameView @JvmOverloads constructor(
             val upgraded = progression.addXp(gained)
             println("Enemy killed: $type +$gained XP (total=${progression.xp})")
             if (upgraded) println("UPGRADE! Attack tier = ${progression.tier}")
-            unlocks.evaluate(progression.xp, progression.tier)
+            unlocks.evaluate(progression.totalXp, progression.tier)
         }
 
-    // Khi enemy đánh trúng player
-        spawnSystem.onPlayerHit = { enemy, dmg ->
         // Khi hoàn thành đủ chu kỳ (2 wave) ở map hiện tại => mở map kế
         spawnSystem.onWaveCycleComplete = {
             if (currentMapIndex > highestClearedMapIndex) {
@@ -322,6 +334,9 @@ class GameView @JvmOverloads constructor(
                 println("[PROGRESS] Map $currentMapId cleared. highestCleared=$highestClearedMapIndex")
             }
         }
+
+        // Khi enemy đánh trúng player
+        spawnSystem.onPlayerHit = { enemy, dmg ->
             if (!playerStats.isDead && uiState != UiState.GAME_OVER) {
                 playerStats.damage(dmg)
                 applyKnockback(enemy.x + enemy.w/2f, enemy.y + enemy.h/2f)
@@ -348,7 +363,7 @@ class GameView @JvmOverloads constructor(
         }
 
         // Init unlocks baseline
-        unlocks.evaluate(progression.xp, progression.tier)
+    unlocks.evaluate(progression.totalXp, progression.tier)
 
     // (Đã có shop nên bỏ auto-buy debug)
         mapOverlay.listener = object : MapSelectOverlay.Listener {
@@ -473,7 +488,17 @@ class GameView @JvmOverloads constructor(
         armySystem.update(dt, playerX + playerBody.w/2f, playerY + playerBody.h/2f)
         armySystem.postUpdate()
     armyRender.update(dt)
-    sheepSystem.update(dt)
+        // Sheep update and periodic spawn only on main map
+        if (currentMapId == "main") {
+            sheepSpawnTimer -= dt
+            if (sheepSpawnTimer <= 0f) {
+                val alive = sheepSystem.aliveCount()
+                val canAdd = (sheepMaxAlive - alive).coerceAtLeast(0).coerceAtMost(sheepSpawnBatch)
+                if (canAdd > 0) sheepSystem.spawnSheep(canAdd)
+                sheepSpawnTimer = sheepSpawnPeriod
+            }
+            sheepSystem.update(dt)
+        }
         // Thu thập thịt nếu player đi qua
         val pcx = playerX + playerBody.w/2f
         val pcy = playerY + playerBody.h/2f
@@ -613,7 +638,7 @@ class GameView @JvmOverloads constructor(
         val radius = mapButtonRect.width() * 0.25f
         val arcRect = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
 
-// Mũi tên cong ở trên
+        // Mũi tên cong ở trên
         canvas.drawArc(arcRect, 270f, 135f, false, iconPaint)
         val angle1 = Math.toRadians(45.0)
         val arrowX1 = cx + (radius * Math.cos(angle1)).toFloat()
@@ -621,7 +646,7 @@ class GameView @JvmOverloads constructor(
         canvas.drawLine(arrowX1, arrowY1, arrowX1 - 15f, arrowY1 - 5f, iconPaint)
         canvas.drawLine(arrowX1, arrowY1, arrowX1 - 5f, arrowY1 - 15f, iconPaint)
 
-// Mũi tên cong ở dưới
+        // Mũi tên cong ở dưới
         canvas.drawArc(arcRect, 90f, 135f, false, iconPaint)
         val angle2 = Math.toRadians(225.0)
         val arrowX2 = cx + (radius * Math.cos(angle2)).toFloat()
@@ -639,11 +664,25 @@ class GameView @JvmOverloads constructor(
         canvas.drawRoundRect(RectF(barLeft2, barTop, barLeft2+barW, barTop+barH), 6f,6f, iconPaint)
         hudPaint.textSize = 14f
 
-        mapOverlay.draw(canvas, maps.map { MapSelectOverlay.Entry(it.id, it.levelRequired, it.enemyTypes, it.damageScale) }, progression.tier + 1)
+        mapOverlay.draw(
+            canvas,
+            maps.map { MapSelectOverlay.Entry(it.id, it.levelRequired, it.enemyTypes, it.damageScale) },
+            progression.tier + 1,
+            highestClearedMapIndex,
+            currentMapIndex
+        )
         buyOverlay.draw(canvas, resources, unlocks)
         if (uiState == UiState.GAME_OVER) gameOverOverlay.draw(canvas)
     housePromptOverlay.draw(canvas)
-    waveHud.draw(canvas, spawnSystem.isWaveMode(), spawnSystem.currentWave(), spawnSystem.totalWaves(), spawnSystem.cooldownRemaining(), spawnSystem.inCycleCooldown())
+    waveHud.draw(
+            canvas,
+            spawnSystem.isWaveMode(),
+            spawnSystem.currentWave(),
+            spawnSystem.totalWaves(),
+            spawnSystem.cooldownRemaining(),
+            spawnSystem.inCycleCooldown(),
+            context.assets
+        )
         // Canvas based pause menu removed (Compose McButton overlay handles pause UI)
         // When paused we simply freeze gameplay; Compose layer will draw menu.
 
@@ -652,22 +691,28 @@ class GameView @JvmOverloads constructor(
 
     // Removed non-Compose pause menu + navigation logic. Compose layer will call setPausedFromCompose(false) to resume.
 
-    // Developer helper: public spawn hooks (có thể được gọi từ overlay buttons sau này)
-    fun buyWarrior() { attemptBuy(UnitType.WARRIOR) }
-    fun buyLancer() { attemptBuy(UnitType.LANCER) }
-    fun buyArcher() { attemptBuy(UnitType.ARCHER) }
-    fun buyMonk() { attemptBuy(UnitType.MONK) }
+    // Developer helper removed: buying is handled via BuyMenuOverlay.
 
     // Public UI bridge: toggle map selection overlay (used by Compose ControlsOverlay C button)
     fun toggleMapOverlay() { mapOverlay.toggle() }
 
     private fun attemptBuy(type: UnitType) {
-        val success = shopSystem.buy(type, playerX + playerBody.w/2f, playerY + playerBody.h/2f)
+        val px = playerX + playerBody.w/2f
+        val py = playerY + playerBody.h/2f
+        val success = shopSystem.buy(type, px, py)
         if (success) {
-            println("Bought $type. Gold=${resources.gold} Meat=${resources.meat}")
-            unlocks.evaluate(progression.xp, progression.tier)
+            println("[SHOP] Bought $type -> Gold=${resources.gold}, Meat=${resources.meat}")
+            unlocks.evaluate(progression.totalXp, progression.tier)
         } else {
-            println("Cannot buy $type (locked or not enough resources)")
+            val can = shopSystem.canBuy(type)
+            val aff = shopSystem.affordable(type)
+            val cost = com.example.empire.game.economy.CostTable.get(type)
+            val reason = when {
+                !can -> "LOCKED"
+                !aff -> "NOT_ENOUGH (need G${cost.gold} M${cost.meat}, have G${resources.gold} M${resources.meat})"
+                else -> "FAILED"
+            }
+            println("[SHOP] FAIL $type -> $reason")
         }
     }
 
@@ -868,6 +913,7 @@ class GameView @JvmOverloads constructor(
     }
 
     private fun drawSheep(canvas: Canvas) {
+        if (currentMapId != "main") return
         canvas.save()
         canvas.scale(scaleFactor, scaleFactor)
         val paint = Paint()
@@ -882,7 +928,7 @@ class GameView @JvmOverloads constructor(
         // meat drops
         val meatBmp = sheepSystem.meatBitmap()
         if (meatBmp != null) {
-            val scale = 0.2f
+            val scale = 0.5f
             val w = meatBmp.width * scale
             val h = meatBmp.height * scale
             sheepSystem.meatDrops.forEach { d ->
@@ -963,7 +1009,7 @@ class GameView @JvmOverloads constructor(
             println("[MAP] Locked. Clear previous map waves first (cleared up to index=$highestClearedMapIndex)")
             return
         }
-        currentMapIndex = index
+    currentMapIndex = index
         currentMapId = target.id
         println("[MAP] Switching to $currentMapId")
         map = MapLoader.loadFromAssets(context, target.file, target.tileset)
@@ -972,18 +1018,17 @@ class GameView @JvmOverloads constructor(
         physics = PhysicsSystem(map)
         spawnSystem.setTileMap(map)
         armySystem.setTileMap(map)
-        spawnSystem.clear()
+    spawnSystem.clear()
+    armySystem.clearDamagePopups()
         spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
         if (currentMapId == "main") {
-            val farmW = map.mapWidth * map.tileSize
-            val farmH = map.mapHeight * map.tileSize
-            val margin = 64f
-            sheepSystem.farmLeft = farmW * 0.65f
-            sheepSystem.farmTop = farmH * 0.60f
-            sheepSystem.farmRight = farmW - margin
-            sheepSystem.farmBottom = farmH - margin
+            setSheepFarmBounds()
             sheepSystem.load()
-            if (sheepSystem.sheep.isEmpty()) sheepSystem.spawnSheep(6)
+            if (sheepSystem.sheep.isEmpty()) sheepSystem.spawnSheep(5)
+            sheepSpawnTimer = sheepSpawnPeriod
+        } else {
+            // Ensure no sheep exist outside main map
+            sheepSystem.clearAll()
         }
         if (target.enemyTypes.isNotEmpty()) {
             spawnSystem.enableWaves(SpawnSystem.WaveConfig(target.enemyTypes, waves = 2, countPerType = 5, cooldownAfter = 20f))

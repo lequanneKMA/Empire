@@ -4,10 +4,7 @@ import android.graphics.Canvas
 import com.example.empire.core.gfx.PlayerAnimator
 import com.example.empire.game.map.MapRenderer
 
-/**
- * Render map + player (và sau này cả enemies, particles…).
- * Chỉ xử lý vẽ, không có logic.
- */
+
 class RenderSystem(
     private var renderer: MapRenderer,
     private val playerAnimator: PlayerAnimator

@@ -19,7 +19,13 @@ class ArmyRenderSystem(
     }
     private var time = 0f
 
-    fun update(dt: Float) { time += dt }
+    fun update(dt: Float) {
+        time += dt
+        // Advance per-unit attack timers so attack animations can play at their own pace
+        army.units.forEach { u ->
+            if (u.anim == AnimState.ATTACK) u.attackAnimTimer += dt else u.attackAnimTimer = 0f
+        }
+    }
     fun updatePerUnit(dt: Float) {
         army.units.forEach { u ->
             if (u.anim == AnimState.ATTACK) u.attackAnimTimer += dt else u.attackAnimTimer = 0f
@@ -31,7 +37,7 @@ class ArmyRenderSystem(
     // Base movement frame time (seconds per frame)
     private val moveFrameTime = 0.12f
     // Attack frame pacing tùy loại
-    private val warriorAttackFrameTime = 0.30f  // chậm hơn (4 frame ~1.2s) để cảm giác nặng rõ
+    private val warriorAttackFrameTime = 0.45f  // chậm hơn nữa (4 frame ~1.8s) chỉ ảnh hưởng hoạt ảnh, không đổi DPS
     private val lancerAttackFrameTime = 0.20f   // 3 frame => ~0.60s anim (nhẹ hơn cooldown)
     private val archerAttackFrameTime = 0.18f
     private val monkCastFrameTime = 0.18f
@@ -85,6 +91,17 @@ class ArmyRenderSystem(
                 )
                 canvas.drawBitmap(bmp, src, dst, paint)
 
+                // Tiny HP bar above unit
+                val hbW = scaledW * 0.3f
+                val hbH = 2f
+                val left = drawX + (scaledW - hbW) / 2f
+                val top = drawY - 6f
+                val hpPerc = (u.hp.toFloat() / u.stats.maxHp).coerceIn(0f, 1f)
+                val back = Paint().apply { color = Color.argb(150, 40, 40, 40) }
+                val bar = Paint().apply { color = Color.rgb(220, 40, 40) }
+                canvas.drawRect(left, top, left + hbW, top + hbH, back)
+                canvas.drawRect(left, top, left + hbW * hpPerc, top + hbH, bar)
+
                 if (u.anim == AnimState.CAST && frames.healEffect != null) {
                     val effectFrames = frames.healEffect.frames
                     if (effectFrames.isNotEmpty()) {
@@ -108,6 +125,18 @@ class ArmyRenderSystem(
                 val sx = (u.x - camX - 16).toInt()
                 val sy = (u.y - camY - 32).toInt()
                 canvas.drawRect(sx.toFloat(), sy.toFloat(), (sx+32).toFloat(), (sy+32).toFloat(), dbgPaint)
+            }
+        }
+        // Draw floating damage popups (screen-space in world coords then scaled already)
+        if (army.getDamagePopups().isNotEmpty()) {
+            val pPaint = Paint(paint)
+            pPaint.color = Color.WHITE
+            pPaint.textSize = 12f
+            pPaint.isFakeBoldText = true
+            army.getDamagePopups().forEach { p ->
+                val sx = p.x - camX
+                val sy = p.y - camY
+                canvas.drawText("-${p.value}", sx, sy, pPaint)
             }
         }
         canvas.restore()

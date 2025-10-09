@@ -17,10 +17,10 @@ package com.example.empire.game.army
 object UnitStatTable {
     private val table: Map<UnitType, UnitStats> = mapOf(
     // Cooldown đã làm chậm lại ~30-40% so với trước để nhịp tấn công “nặng” hơn
-    UnitType.WARRIOR to UnitStats(maxHp = 180, attack = 6,  moveSpeed = 80f, range = 48f,  cooldown = 1.25f, defense = 2),
-    UnitType.LANCER  to UnitStats(maxHp = 140, attack = 9,  moveSpeed = 90f, range = 72f,  cooldown = 1.65f, defense = 1),
-    UnitType.ARCHER  to UnitStats(maxHp = 110, attack = 7,  moveSpeed = 85f, range = 200f, cooldown = 1.45f, defense = 0, isRanged = true),
-    UnitType.MONK    to UnitStats(maxHp = 120, attack = 2,  moveSpeed = 78f, range = 40f,  cooldown = 1.9f, defense = 1)
+    UnitType.WARRIOR to UnitStats(maxHp = 70, attack = 5,  moveSpeed = 80f, range = 28f,  cooldown = 1.25f, defense = 2),
+    UnitType.LANCER  to UnitStats(maxHp = 60, attack = 7,  moveSpeed = 90f, range = 36f,  cooldown = 1.65f, defense = 1),
+    UnitType.ARCHER  to UnitStats(maxHp = 55, attack = 6,  moveSpeed = 85f, range = 100f, cooldown = 1.45f, defense = 0, isRanged = true),
+    UnitType.MONK    to UnitStats(maxHp = 45, attack = 3,  moveSpeed = 78f, range = 20f,  cooldown = 1.9f, defense = 1)
     )
 
     fun get(type: UnitType): UnitStats = table.getValue(type)

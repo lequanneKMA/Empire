@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavController
 import com.example.empire.game.GameView
+import com.example.empire.ui.gameplay.GameViewHolder
 import com.example.empire.game.Direction
 import com.example.empire.ui.controls.ControlsOverlay
 import com.example.empire.ui.gameplay.PauseOverlay
@@ -16,7 +17,9 @@ import com.example.empire.ui.gameplay.PauseOverlay
 @Composable
 fun GameplayScreen(nav: NavController) {
     val context = LocalContext.current
-    val gameView = remember { GameView(context) }
+    val gameView = remember {
+        GameViewHolder.gameView ?: GameView(context).also { GameViewHolder.gameView = it }
+    }
     var paused by remember { mutableStateOf(false) }
 
     fun setPaused(p: Boolean) {
@@ -27,6 +30,16 @@ fun GameplayScreen(nav: NavController) {
     // Lắng nghe thay đổi pause từ GameView (phím P hoặc nút pause trong canvas)
     LaunchedEffect(gameView) {
         gameView.onPauseChange = { p -> paused = p }
+    }
+
+    // Khi quay lại từ Settings, nếu có cờ returnToPause thì bật lại Pause overlay
+    val returnToPause = nav.currentBackStackEntry?.savedStateHandle?.get<Boolean>("returnToPause") == true
+    LaunchedEffect(returnToPause) {
+        if (returnToPause) {
+            paused = true
+            gameView.setPausedFromCompose(true)
+            nav.currentBackStackEntry?.savedStateHandle?.set("returnToPause", false)
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -59,10 +72,15 @@ fun GameplayScreen(nav: NavController) {
                 nav.navigate(com.example.empire.ui.Screen.SelectSave.route)
             },
             onSettings = {
-                setPaused(false)
+                // đảm bảo trạng thái paused được giữ khi vào Settings
+                paused = true
+                gameView.setPausedFromCompose(true)
                 nav.navigate(com.example.empire.ui.Screen.Settings.route)
             },
-            onExit = { nav.popBackStack() }
+            onExit = {
+                GameViewHolder.gameView = null
+                nav.popBackStack()
+            }
         )
     }
 }

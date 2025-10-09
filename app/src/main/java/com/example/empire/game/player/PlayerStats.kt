@@ -1,8 +1,5 @@
 package com.example.empire.game.player
 
-/**
- * Thống kê cơ bản của player: HP, maxHP. (Part 1 skeleton)
- */
 class PlayerStats(
     var maxHp: Int = 10
 ) {

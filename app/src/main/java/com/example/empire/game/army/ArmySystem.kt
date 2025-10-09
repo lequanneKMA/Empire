@@ -21,6 +21,11 @@ class ArmySystem(
     private val _units = mutableListOf<UnitEntity>()
     val units: List<UnitEntity> get() = _units
 
+    // Floating damage popups for army units
+    data class DmgPopup(var x: Float, var y: Float, var value: Int, var ttl: Float = 0.75f, var vy: Float = -22f)
+    private val dmgPopups = mutableListOf<DmgPopup>()
+    fun getDamagePopups(): List<DmgPopup> = dmgPopups
+
     // Map reference for collision
     private var tileMap: TileMap? = null
     private var aiController: ArmyAIController? = null
@@ -45,7 +50,8 @@ class ArmySystem(
         extraBlocked = arr
     }
 
-    fun clear() { _units.clear() }
+    fun clear() { _units.clear(); dmgPopups.clear() }
+    fun clearDamagePopups() { dmgPopups.clear() }
 
     var maxUnits = 20
 
@@ -118,6 +124,17 @@ class ArmySystem(
 
     /** Update: follow + combat cho melee units. */
     fun update(dt: Float, playerX: Float, playerY: Float) {
+        // Always update damage popups even if no units present
+        if (dmgPopups.isNotEmpty()) {
+            val itPop = dmgPopups.iterator()
+            while (itPop.hasNext()) {
+                val p = itPop.next()
+                p.ttl -= dt
+                p.y += p.vy * dt
+                if (p.ttl <= 0f) itPop.remove()
+            }
+        }
+
         if (_units.isEmpty()) return
 
         // Giảm spam target: accumulator nhỏ
@@ -143,6 +160,11 @@ class ArmySystem(
             }
         }
         // (Damage vào army giờ được xử lý qua callback impact từ SpawnSystem -> onEnemyAttackImpact)
+
+        // (damage popups were updated at the beginning, so nothing here)
+
+        // Purge dead units
+        purgeDeadUnits()
     }
 
     private var targetAccum = 0f
@@ -499,6 +521,12 @@ class ArmySystem(
 
     // Hook separation at end of public update
     fun postUpdate() { applySeparation() }
+
+    private fun purgeDeadUnits() {
+        if (_units.any { it.hp <= 0 }) {
+            _units.removeAll { it.hp <= 0 }
+        }
+    }
     // Enemy impact callback (gọi từ GameView khi spawnSystem báo impact frame)
     fun onEnemyAttackImpact(enemy: SpawnSystem.Enemy) {
         if (_units.isEmpty()) return
@@ -524,6 +552,14 @@ class ArmySystem(
             SpawnSystem.EnemyType.FLYBEE -> 3
         }
         target.hp -= dmg
-        if (target.hp <= 0) { target.hp = 0; target.anim = AnimState.IDLE }
+        // Spawn damage popup
+        dmgPopups += DmgPopup(x = target.x, y = target.y - 20f, value = dmg)
+        if (target.hp <= 0) {
+            target.hp = 0
+            target.anim = AnimState.IDLE
+            // Removal will happen in purgeDeadUnits() at end of update; to be safe if impact occurs outside
+            // of update frame, we can also purge immediately when no iteration is ongoing.
+            // No direct remove here to avoid concurrent modification; next update will purge.
+        }
     }
 }

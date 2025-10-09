@@ -11,9 +11,23 @@ class ProgressionManager(
         private set
     var tier: Int = 0
         private set
+    var totalXp: Int = 0
+        private set
 
     val currentThreshold: Int
         get() = thresholds.getOrNull(tier) ?: thresholds.lastOrNull() ?: 0
+
+    private fun thresholdForTier(t: Int): Int {
+        return thresholds.getOrNull(t) ?: thresholds.lastOrNull() ?: 0
+    }
+
+    /** XP hiện tại trong cấp (đã trừ các ngưỡng cũ). */
+    val currentLevelXp: Int
+        get() = xp
+
+    /** Ngưỡng cần cho cấp hiện tại. */
+    val nextLevelThreshold: Int
+        get() = currentThreshold
 
     /**
      * Thêm XP, trả về true nếu vừa nâng cấp tier.
@@ -21,16 +35,25 @@ class ProgressionManager(
     fun addXp(amount: Int): Boolean {
         if (amount <= 0) return false
         xp += amount
+        totalXp += amount
         var upgraded = false
-        while (tier < thresholds.size && xp >= thresholds[tier]) {
+        var guard = 0
+        while (true) {
+            val need = thresholdForTier(tier)
+            if (need <= 0) break // tránh vòng lặp vô hạn nếu cấu hình sai
+            if (xp < need) break
+            xp -= need // reset XP về phần dư khi lên cấp
             tier++
             upgraded = true
+            guard++
+            if (guard > 100) break // an toàn
         }
         return upgraded
     }
 
     fun reset() {
         xp = 0
+        totalXp = 0
         tier = 0
     }
 }

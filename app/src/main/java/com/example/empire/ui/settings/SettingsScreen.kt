@@ -1,6 +1,9 @@
 package com.example.empire.ui.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -21,6 +24,13 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun SettingsScreen(navController: NavController) {
+    // Handle system back: quay lại Pause overlay nếu đến từ Gameplay
+    BackHandler {
+        navController.previousBackStackEntry
+            ?.savedStateHandle
+            ?.set("returnToPause", true)
+        navController.popBackStack()
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
     // Khởi tạo âm thanh 1 lần (nhạc chưa có => truyền null)
     LaunchedEffect(Unit) { AudioManager.init(context, null) }
@@ -29,8 +39,26 @@ fun SettingsScreen(navController: NavController) {
     var volume by remember { mutableStateOf(AudioManager.volume) }
 
     Box(Modifier.fillMaxSize()) {
+        // Always-visible back button pinned at top-left
+        McButton(
+            text = "Quay lại",
+            modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+            width = 110.dp,
+            height = 34.dp,
+            textSizeSp = 18
+        ) {
+            // báo cho GameplayScreen biết là cần hiện Pause overlay khi quay lại
+            navController.previousBackStackEntry
+                ?.savedStateHandle
+                ?.set("returnToPause", true)
+            navController.popBackStack()
+        }
+
         Column(
-            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text("CÀI ĐẶT ÂM THANH", fontFamily = PixelFont, fontSize = 30.sp, color = Color.White)
@@ -77,7 +105,6 @@ fun SettingsScreen(navController: NavController) {
                 modifier = Modifier.width(240.dp)
             )
             Spacer(Modifier.height(40.dp))
-            McButton("Quay lại") { navController.popBackStack() }
         }
     }
 }

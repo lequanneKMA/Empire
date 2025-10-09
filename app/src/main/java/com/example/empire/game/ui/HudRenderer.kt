@@ -39,15 +39,15 @@ class HudRenderer(
         hudPaint.typeface = pixelTypeface
     }
     // Load drawables by name to tolerate possible naming (hp_bar_full vs hp_bar_Full)
-    private val hpEmptyRaw: Bitmap by lazy {
+    private val hpEmptyRaw: Bitmap? by lazy {
         val id1 = res.getIdentifier("hp_bar_empty", "drawable", packageName)
         val id = if (id1 != 0) id1 else res.getIdentifier("hp_bar_Empty", "drawable", packageName)
-        BitmapFactory.decodeResource(res, id)
+        if (id != 0) BitmapFactory.decodeResource(res, id) else null
     }
-    private val hpFullRaw: Bitmap by lazy {
+    private val hpFullRaw: Bitmap? by lazy {
         val id1 = res.getIdentifier("hp_bar_full", "drawable", packageName)
         val id = if (id1 != 0) id1 else res.getIdentifier("hp_bar_Full", "drawable", packageName)
-        BitmapFactory.decodeResource(res, id)
+        if (id != 0) BitmapFactory.decodeResource(res, id) else null
     }
     private var scaledW = 0
     private var scaledH = 0
@@ -104,9 +104,9 @@ class HudRenderer(
 
 
     private fun ensureHpScaled(targetW: Int, targetH: Int) {
-        if (scaledW == targetW && scaledH == targetH && hpEmptyScaled != null && hpFullScaled != null) return
-        hpEmptyScaled = Bitmap.createScaledBitmap(hpEmptyRaw, targetW, targetH, true)
-        hpFullScaled = Bitmap.createScaledBitmap(hpFullRaw, targetW, targetH, true)
+        if (scaledW == targetW && scaledH == targetH) return
+        hpEmptyScaled = hpEmptyRaw?.let { Bitmap.createScaledBitmap(it, targetW, targetH, true) }
+        hpFullScaled = hpFullRaw?.let { Bitmap.createScaledBitmap(it, targetW, targetH, true) }
         scaledW = targetW; scaledH = targetH
     }
     /**
@@ -166,13 +166,19 @@ class HudRenderer(
         ensureHpScaled(barW.toInt(), barH.toInt())
         // ... (Toàn bộ code vẽ thanh máu được giữ nguyên)
         val hpPerc = (playerStats.hp.toFloat() / playerStats.maxHp.coerceAtLeast(1)).coerceIn(0f, 1f)
-        hpEmptyScaled?.let { canvas.drawBitmap(it, hpX, currentY, null) }
-        if (hpPerc > 0f) {
-            hpFullScaled?.let {
+        if (hpEmptyScaled != null) {
+            canvas.drawBitmap(hpEmptyScaled!!, hpX, currentY, null)
+            if (hpPerc > 0f && hpFullScaled != null) {
                 val save = canvas.save()
                 canvas.clipRect(hpX, currentY, hpX + barW * hpPerc, currentY + barH)
-                canvas.drawBitmap(it, hpX, currentY, null)
+                canvas.drawBitmap(hpFullScaled!!, hpX, currentY, null)
                 canvas.restoreToCount(save)
+            }
+        } else {
+            // Fallback: draw simple rectangle HP bar if images are missing
+            canvas.drawRect(hpX, currentY, hpX + barW, currentY + barH, hpBarBackPaint)
+            if (hpPerc > 0f) {
+                canvas.drawRect(hpX, currentY, hpX + barW * hpPerc, currentY + barH, hpBarPaint)
             }
         }
         hudPaint.textAlign = Paint.Align.CENTER
@@ -206,14 +212,15 @@ class HudRenderer(
 
 
         // --- 3. Thanh kinh nghiệm (Mới) ---
+        currentY += 20f
         val xpBarH = 30f
-        val xpNeeded = progression.currentThreshold
-        val xpPerc = if (xpNeeded > 0) (progression.xp.toFloat() / xpNeeded) else 1f
+    val xpNeeded = progression.currentThreshold
+    val xpPerc = if (xpNeeded > 0) (progression.currentLevelXp.toFloat() / xpNeeded) else 1f
         canvas.drawRect(hpX, currentY, hpX + barW, currentY + xpBarH, xpBarBackPaint)
         canvas.drawRect(hpX, currentY, hpX + barW * xpPerc, currentY + xpBarH, xpBarPaint)
         hudPaint.textSize = 28f
         hudPaint.isFakeBoldText = false
-        val expText = "EXP ${progression.xp}/${xpNeeded}"
+    val expText = "EXP ${progression.currentLevelXp}/${xpNeeded}"
         val expTextY = (currentY + xpBarH / 2f) - ((hudPaint.descent() + hudPaint.ascent()) / 2f)
         canvas.drawText(expText, hpX + barW / 2f, expTextY, hudPaint)
         currentY += xpBarH + margin
@@ -235,7 +242,7 @@ class HudRenderer(
         hudPaint.textSize = resTextSize
         hudPaint.isFakeBoldText = true
 
-// Scale icons (phần này không cần chỉnh)
+        // Scale icons (phần này không cần chỉnh)
         val targetIconH = resIconH.toInt()
         if (goldScaled == null || goldScaledH != targetIconH) {
             goldScaled = goldRaw?.let { Bitmap.createScaledBitmap(it, (it.width * (resIconH / it.height)).toInt(), targetIconH, true) }
@@ -246,22 +253,20 @@ class HudRenderer(
             meatScaledH = targetIconH
         }
 
-// Căn chỉnh Vàng
+        // Căn chỉnh Vàng
         goldScaled?.let {
             // Logic căn chỉnh mới, đơn giản hơn
             val textBaselineY = currentY + (it.height * textVerticalAlign)
-
             canvas.drawBitmap(it, resX, currentY, null)
             resX += it.width + textGap
             canvas.drawText("${resources.gold}", resX, textBaselineY, hudPaint)
             resX += hudPaint.measureText("${resources.gold}") + itemGap
         }
 
-// Căn chỉnh Thịt
+        // Căn chỉnh Thịt
         meatScaled?.let {
             // Logic căn chỉnh mới, đơn giản hơn
             val textBaselineY = currentY + (it.height * textVerticalAlign)
-
             canvas.drawBitmap(it, resX, currentY, null)
             resX += it.width + textGap
             canvas.drawText("${resources.meat}", resX, textBaselineY, hudPaint)
@@ -294,7 +299,7 @@ class HudRenderer(
             val saveBold = hudPaint.isFakeBoldText
             val saveAlign2 = hudPaint.textAlign
 
-            hudPaint.textSize = 33f
+            hudPaint.textSize = 40f
             hudPaint.isFakeBoldText = true
             hudPaint.textAlign = Paint.Align.CENTER
             hudPaint.color = Color.WHITE

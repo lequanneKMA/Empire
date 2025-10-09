@@ -132,4 +132,11 @@ class SheepSystem(private val assets: android.content.res.AssetManager) {
         if (count > 0) onCollect(count)
         cleanupCollected()
     }
+
+    // Helpers for external management
+    fun clearAll() {
+        _sheep.clear()
+        _meatDrops.clear()
+    }
+    fun aliveCount(): Int = _sheep.count { it.alive }
 }
