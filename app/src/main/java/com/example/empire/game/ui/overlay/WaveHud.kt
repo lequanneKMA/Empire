@@ -73,7 +73,7 @@ class WaveHud(
         val text = if (inCooldown) "${String.format("%.1f", cooldown)}s" else "$current/$total"
         // Larger text and centered within the icon area
         hudPaint.textAlign = Paint.Align.CENTER
-        hudPaint.textSize = 22f
+        hudPaint.textSize = 30f
         hudPaint.color = Color.BLACK
         canvas.drawText(text, textCx + 2f, textCy + 2f, hudPaint)
         hudPaint.color = Color.WHITE

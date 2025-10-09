@@ -1,4 +1,4 @@
-package com.example.empire.ui.gameplay
+package com.example.empire.game.ui.overlay
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*

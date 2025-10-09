@@ -5,7 +5,6 @@ package com.example.empire.game.ecs.systems
  */
 class SpawnSystem {
 
-    // Đổi tên rõ ràng theo asset: FLYBEE, MONSTER, SLIME, WOLF
     enum class EnemyType { FLYBEE, MONSTER, SLIME, WOLF }
 
     enum class AttackTarget { PLAYER, ARMY }
@@ -267,7 +266,7 @@ class SpawnSystem {
         EnemyType.FLYBEE -> 0.65f
     }
     private fun attackDuration(e: Enemy): Float = when(e.type){
-        EnemyType.FLYBEE -> 0.5f 
+        EnemyType.FLYBEE -> 0.5f
         else -> 0.6f
     }
     private fun attackHitPoint(e: Enemy): Float = 0.3f // seconds into animation (FlyBee vẫn dùng)

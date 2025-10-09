@@ -4,10 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import kotlin.random.Random
 
-/**
- * Quản lý bầy cừu trong trang trại (map main, góc dưới bên phải).
- * Cừu chỉ di chuyển ngẫu nhiên trong vùng giới hạn.
- */
+
 class SheepSystem(private val assets: android.content.res.AssetManager) {
     data class Sheep(
         var x: Float,

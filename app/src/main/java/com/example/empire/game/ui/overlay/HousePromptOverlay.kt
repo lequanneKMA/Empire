@@ -80,7 +80,7 @@ class HousePromptOverlay(
         val prevAlign = hudPaint.textAlign
 
         hudPaint.textAlign = Paint.Align.CENTER
-        hudPaint.textSize = 26f
+        hudPaint.textSize = 45f
         hudPaint.isFakeBoldText = true
         hudPaint.color = Color.WHITE
         canvas.drawText("Nhà chính", headerRect.centerX(), headerRect.centerY() + 9f, hudPaint)
@@ -88,16 +88,16 @@ class HousePromptOverlay(
         // Body text
         val bodyRect = RectF(inner.left + innerPad, headerRect.bottom + 10f, inner.right - innerPad, headerRect.bottom + 10f + bodyH)
         hudPaint.textAlign = Paint.Align.LEFT
-        hudPaint.textSize = 20f
+        hudPaint.textSize = 40f
         hudPaint.isFakeBoldText = false
         hudPaint.color = Color.argb(235, 240, 240, 245)
-        canvas.drawText("Bạn có muốn vào nhà chính?", bodyRect.left, bodyRect.centerY(), hudPaint)
+        canvas.drawText("Bạn có muốn vào menu mua quân lính?", bodyRect.left, bodyRect.centerY(), hudPaint)
 
         // Footer help
         val footerY = inner.bottom - innerPad
-        hudPaint.textSize = 16f
+        hudPaint.textSize = 35f
         hudPaint.color = Color.argb(220, 230, 230, 236)
-        canvas.drawText("A: Vào  B: Hủy", bodyRect.left, footerY - 6f, hudPaint)
+        canvas.drawText("A: Vào                          B: Hủy", bodyRect.left, footerY - 6f, hudPaint)
 
         // Restore
         hudPaint.textAlign = prevAlign

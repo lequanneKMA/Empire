@@ -9,10 +9,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.navigation.NavController
 import com.example.empire.game.GameView
-import com.example.empire.ui.gameplay.GameViewHolder
-import com.example.empire.game.Direction
 import com.example.empire.ui.controls.ControlsOverlay
-import com.example.empire.ui.gameplay.PauseOverlay
+import com.example.empire.game.ui.overlay.PauseOverlay
+import com.example.empire.ui.Screen
 
 @Composable
 fun GameplayScreen(nav: NavController) {
@@ -69,13 +68,13 @@ fun GameplayScreen(nav: NavController) {
             onResume = { setPaused(false) },
             onLoad = {
                 setPaused(false)
-                nav.navigate(com.example.empire.ui.Screen.SelectSave.route)
+                nav.navigate(Screen.SelectSave.route)
             },
             onSettings = {
                 // đảm bảo trạng thái paused được giữ khi vào Settings
                 paused = true
                 gameView.setPausedFromCompose(true)
-                nav.navigate(com.example.empire.ui.Screen.Settings.route)
+                nav.navigate(Screen.Settings.route)
             },
             onExit = {
                 GameViewHolder.gameView = null
