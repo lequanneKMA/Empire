@@ -237,6 +237,8 @@ class GameView @JvmOverloads constructor(
         spawnSystem.onEnemyAttackImpact = { enemy ->
             armySystem.onEnemyAttackImpact(enemy)
         }
+        // Ensure SFX system initialized for gameplay
+        try { SfxManager.init(context) } catch (_: Exception) {}
         // Enemy target preference: prefer nearby army units over player
         spawnSystem.queryNearestArmyCenter = { ex, ey, radius ->
             val r2 = radius * radius
