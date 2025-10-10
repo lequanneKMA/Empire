@@ -40,6 +40,8 @@ import com.example.empire.audio.SfxManager
 import kotlin.math.abs
 import kotlin.math.sqrt
 import com.example.empire.game.sheep.SheepSystem
+import com.example.empire.game.boss.BossSpriteLoader
+import com.example.empire.game.boss.BossSystem
 
 class GameView @JvmOverloads constructor(
     context: Context,
@@ -144,6 +146,40 @@ class GameView @JvmOverloads constructor(
     private val enemySprites = EnemySpriteLoader(context).apply { loadAll() }
     private val enemyRender = EnemyRenderSystem(spawnSystem, enemySprites)
     private val combatSystem = CombatSystem(spawnSystem)
+    // Boss (final map only)
+    private val bossSprites = BossSpriteLoader(context)
+    private val bossSystem = BossSystem(bossSprites, spawnSystem).apply {
+        onPlayerHit = { dmg ->
+            if (!playerStats.isDead && uiState != UiState.GAME_OVER) {
+                playerStats.damage(dmg)
+                if (playerStats.isDead) {
+                    uiState = UiState.GAME_OVER
+                    println("Player died -> GAME OVER. Nhấn A để hồi sinh về main map, nhấn B để về Start.")
+                    gameOverOverlay.show()
+                }
+            }
+        }
+        onArmyImpact = { cx, cy, range, dmg ->
+            var best: UnitEntity? = null
+            var bestD2 = Float.MAX_VALUE
+            armySystem.units.forEach { u ->
+                if (u.hp <= 0) return@forEach
+                val dx = u.x - cx
+                val dy = u.y - cy
+                val d2 = dx*dx + dy*dy
+                if (d2 <= range*range && d2 < bestD2) { bestD2 = d2; best = u }
+            }
+            best?.let { target ->
+                target.hp -= dmg
+                if (target.hp < 0) target.hp = 0
+            }
+        }
+        onDeath = {
+            uiState = UiState.WINNER
+            winnerOverlay.show()
+            println("[WINNER] Boss defeated! Nhấn A để về Main Menu")
+        }
+    }
     // progression & stats
     private val progression = ProgressionManager(intArrayOf(50)).also {
         // Restore progression from save (recompute from totalXp)
@@ -235,6 +271,13 @@ class GameView @JvmOverloads constructor(
                 UnitEntity(su.x, su.y, type, UnitStatTable.get(type), hp = su.hp)
             }
             armySystem.restoreUnits(restored)
+        }
+        // Spawn boss if current is final map
+        if (currentMapId == maps.last().id) {
+            val spawn = map.getSpawn("boss") ?: map.getSpawn("player") ?: (12 to 8)
+            val (tx, ty) = spawn
+            val (cx, cy) = map.tileCenter(tx, ty)
+            bossSystem.spawnAt(cx - 56f, cy - 56f)
         }
     }
 
@@ -380,12 +423,21 @@ class GameView @JvmOverloads constructor(
                 println("[PROGRESS] Map $currentMapId cleared. highestCleared=$highestClearedMapIndex")
                 saveGame()
             }
-            // Nếu clear map cuối cùng coi như thắng boss.
+            // Final victory is handled by boss death; do not auto-win on final wave clear.
             if (currentMapIndex == maps.lastIndex) {
-                uiState = UiState.WINNER
-                winnerOverlay.show()
-                println("[WINNER] Chúc mừng! Nhấn A để về Main Menu")
+                println("[FINAL] Wave cycle complete on final map. Defeat the Boss to win!")
             }
+        }
+        // Mỗi khi dọn xong 1 wave: +100 vàng, +30 XP, hồi 20 máu
+        spawnSystem.onWaveComplete = { clearedWave, total ->
+            resources.addGold(100)
+            val leveled = progression.addXp(30)
+            playerStats.heal(20)
+            println("[WAVE REWARD] Cleared wave $clearedWave/$total -> +100 Gold, +30 XP, +20 HP (HP=${playerStats.hp}/${playerStats.maxHp})")
+            if (leveled) {
+                println("UPGRADE! Attack tier = ${progression.tier}")
+            }
+            saveGame()
         }
 
         // Khi enemy đánh trúng player
@@ -554,15 +606,31 @@ class GameView @JvmOverloads constructor(
             // Hard safety: even if something accidentally spawned, wipe it
             if (spawnSystem.enemies.isNotEmpty()) spawnSystem.clear()
         }
-        spawnSystem.setPlayerTarget(playerX + playerBody.w/2f, playerY + playerBody.h/2f)
+    val pxc = playerX + playerBody.w/2f
+    val pyc = playerY + playerBody.h/2f
+    spawnSystem.setPlayerTarget(pxc, pyc)
+    bossSystem.setPlayerTarget(pxc, pyc)
         spawnSystem.update(dt)
         enemyRender.update(dt)
-        combatSystem.update(dt, playerX, playerY, playerBody.w, playerBody.h)
-        // Player attack -> làm damage lên cừu trong range nếu đang vung kiếm (attackTimer > 0)
+    combatSystem.update(dt, playerX, playerY, playerBody.w, playerBody.h)
+    bossSystem.update(dt)
+        // Player attack -> làm damage lên cừu + boss trong range nếu đang vung kiếm (attackTimer > 0)
         if (combatSystem.attackTimer > 0f) {
             val cxAtk = playerX + playerBody.w/2f
             val cyAtk = playerY + playerBody.h/2f
             sheepSystem.damageSheep(cxAtk, cyAtk, combatSystem.attackRange, 1) { _, _ -> }
+            bossSystem.boss?.let { b ->
+                val bx = b.x + b.w/2f
+                val by = b.y + b.h/2f
+                val dx = bx - cxAtk
+                val dy = by - cyAtk
+                val d2 = dx*dx + dy*dy
+                val r = combatSystem.attackRange
+                if (d2 <= r*r) {
+                    val killed = bossSystem.applyDamage(1)
+                    if (killed) { uiState = UiState.WINNER; winnerOverlay.show() }
+                }
+            }
         }
         armySystem.update(dt, playerX + playerBody.w/2f, playerY + playerBody.h/2f)
         armySystem.postUpdate()
@@ -646,8 +714,10 @@ class GameView @JvmOverloads constructor(
             playerW = playerW, playerH = playerH,
             spriteScale = spriteScale
         )
-        // Enemies
-        enemyRender.draw(canvas, camX, camY, scaleFactor)
+    // Enemies
+    enemyRender.draw(canvas, camX, camY, scaleFactor)
+    // Boss
+    bossSystem.draw(canvas, camX, camY, scaleFactor)
         // Army
     armyRender.draw(canvas, camX, camY, scaleFactor)
     drawSheep(canvas)
@@ -910,6 +980,8 @@ class GameView @JvmOverloads constructor(
         spawnSystem.setAutoSpawnEnabled(false)
         spawnSystem.setDamageScale(1f)
         spawnSystem.setMapBounds(map.mapWidth * map.tileSize, map.mapHeight * map.tileSize)
+    // Ensure boss is removed when returning to main map
+    bossSystem.clear()
         armySystem.setTileMap(map)
         armySystem.clear()
         // Setup sheep farm again
@@ -954,6 +1026,8 @@ class GameView @JvmOverloads constructor(
         if (currentMapId == "main") {
             spawnSystem.disableWaves(); spawnSystem.setAutoSpawnEnabled(false); spawnSystem.setDamageScale(1f)
             setSheepFarmBounds(); sheepSystem.load(); if (sheepSystem.sheep.isEmpty()) sheepSystem.spawnSheep(5); sheepSpawnTimer = sheepSpawnPeriod
+            // Boss cannot exist on main map
+            bossSystem.clear()
         } else {
             sheepSystem.clearAll()
             if (target.enemyTypes.isNotEmpty()) {
@@ -962,6 +1036,15 @@ class GameView @JvmOverloads constructor(
                 spawnSystem.setAutoSpawnEnabled(false)
             } else {
                 spawnSystem.disableWaves(); spawnSystem.setAutoSpawnEnabled(false); spawnSystem.setDamageScale(1f)
+            }
+            // Spawn boss only on final map
+            if (currentMapId == maps.last().id) {
+                val bspawn = map.getSpawn("boss") ?: map.getSpawn("player") ?: (12 to 8)
+                val (tbx, tby) = bspawn
+                val (cbx, cby) = map.tileCenter(tbx, tby)
+                bossSystem.spawnAt(cbx - 56f, cby - 56f)
+            } else {
+                bossSystem.clear()
             }
         }
 
@@ -1091,12 +1174,12 @@ class GameView @JvmOverloads constructor(
 
     private fun handleProjectileCollisions() {
         val enemies = spawnSystem.enemies
-        if (enemies.isEmpty() || projectileSystem.projectiles.isEmpty()) return
+        if (projectileSystem.projectiles.isEmpty()) return
         projectileSystem.projectiles.forEach { p ->
             if (!p.alive) return@forEach
+            // Check hits on regular enemies
             enemies.forEach { e ->
                 if (!e.alive || e.state == SpawnSystem.Enemy.State.DEAD) return@forEach
-                // AABB hit test (enemy rect vs point radius 3)
                 val ex1 = e.x
                 val ey1 = e.y
                 val ex2 = e.x + e.w
@@ -1107,8 +1190,21 @@ class GameView @JvmOverloads constructor(
                     p.alive = false
                 }
             }
+            // Check boss collision
+            bossSystem.boss?.let { b ->
+                if (!p.alive) return@let
+                val bx1 = b.x
+                val by1 = b.y
+                val bx2 = b.x + b.w
+                val by2 = b.y + b.h
+                if (p.x >= bx1 && p.x <= bx2 && p.y >= by1 && p.y <= by2) {
+                    val killed = bossSystem.applyDamage(p.damage)
+                    if (killed) { uiState = UiState.WINNER; winnerOverlay.show() }
+                    p.alive = false
+                }
+            }
         }
-        spawnSystem.removeDead()
+        if (enemies.isNotEmpty()) spawnSystem.removeDead()
     }
 
     // ================= Map Switching =================
@@ -1172,6 +1268,8 @@ class GameView @JvmOverloads constructor(
             sheepSystem.load()
             if (sheepSystem.sheep.isEmpty()) sheepSystem.spawnSheep(5)
             sheepSpawnTimer = sheepSpawnPeriod
+            // No boss on main map
+            bossSystem.clear()
         } else {
             // Ensure no sheep exist outside main map
             sheepSystem.clearAll()
@@ -1184,6 +1282,15 @@ class GameView @JvmOverloads constructor(
             spawnSystem.disableWaves()
             spawnSystem.setAutoSpawnEnabled(false)
             spawnSystem.setDamageScale(1f)
+        }
+        // Boss spawn/clear by map
+        if (currentMapId == maps.last().id) {
+            val bspawn = map.getSpawn("boss") ?: map.getSpawn("player") ?: (12 to 8)
+            val (tbx, tby) = bspawn
+            val (cbx, cby) = map.tileCenter(tbx, tby)
+            bossSystem.spawnAt(cbx - 56f, cby - 56f)
+        } else {
+            bossSystem.clear()
         }
         val spawn = map.getSpawn("player") ?: (10 to 5)
         val (tx, ty) = spawn

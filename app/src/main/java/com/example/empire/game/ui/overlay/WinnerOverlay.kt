@@ -26,36 +26,60 @@ class WinnerOverlay(
                 banner = BitmapFactory.decodeStream(ins)
             }
         } catch (_: Exception) {
-            // ignore if not found; overlay will just be text-only
+            // ignore
         }
     }
 
     fun draw(canvas: Canvas, assets: AssetManager) {
         if (!visible) return
-        ensureBanner(assets)
-        val w = canvas.width * 0.7f
-        val h = 280f
-        val left = (canvas.width - w)/2f
-        val top = (canvas.height - h)/2f - uiInset
-        val rect = RectF(left, top, left + w, top + h)
-        canvas.drawRoundRect(rect, 18f, 18f, panelPaint)
-        canvas.drawRoundRect(rect, 18f, 18f, panelBorder)
 
-        val bmp = banner
-        if (bmp != null) {
-            val scale = (w * 0.8f) / bmp.width
-            val bw = bmp.width * scale
-            val bh = bmp.height * scale
-            val bx = left + (w - bw)/2f
-            val by = top + 30f
-            val dst = RectF(bx, by, bx + bw, by + bh)
-            canvas.drawBitmap(bmp, null, dst, null)
+        ensureBanner(assets)
+        val bmp = banner // Lấy banner ra trước
+
+        // --- Bắt đầu tính toán để căn giữa ---
+
+        // 1. Tính kích thước banner sau khi scale
+        val bannerWidth = canvas.width * 0.8f
+        val bannerHeight = if (bmp != null) {
+            (bannerWidth / bmp.width) * bmp.height
+        } else {
+            0f // Nếu không có banner thì chiều cao là 0
         }
 
-        hudPaint.textSize = 30f
-        canvas.drawText("CHÚC MỪNG!", left + 40f, top + h - 90f, hudPaint)
-        hudPaint.textSize = 18f
-        canvas.drawText("A: Về Main Menu", left + 40f, top + h - 50f, hudPaint)
-        hudPaint.textSize = 14f
+        // 2. Định nghĩa kích thước khung text
+        val panelWidth = canvas.width * 0.8f
+        val panelHeight = 180f
+        val spacing = 20f // Khoảng cách giữa banner và khung text
+
+        // 3. Tính tổng chiều cao và căn giữa toàn bộ giao diện
+        val totalHeight = bannerHeight + spacing + panelHeight
+        var currentY = (canvas.height - totalHeight) / 2f // Đây là tọa độ Y bắt đầu của cả khối
+
+        // 4. Vẽ banner "Congratulations!"
+        if (bmp != null) {
+            val bannerLeft = (canvas.width - bannerWidth) / 2f
+            val bannerRect = RectF(bannerLeft, currentY, bannerLeft + bannerWidth, currentY + bannerHeight)
+            canvas.drawBitmap(bmp, null, bannerRect, null)
+            currentY += bannerHeight + spacing // Cập nhật tọa độ Y cho phần tiếp theo
+        }
+
+//        // 5. Vẽ khung đen chứa text
+//        val panelLeft = (canvas.width - panelWidth) / 2f
+//        val panelRect = RectF(panelLeft, currentY, panelLeft + panelWidth, currentY + panelHeight)
+//        canvas.drawRoundRect(panelRect, 18f, 18f, panelPaint)
+//        canvas.drawRoundRect(panelRect, 18f, 18f, panelBorder)
+//
+//        // 6. Căn giữa text trong khung
+//        hudPaint.textAlign = Paint.Align.CENTER
+//        val centerX = panelLeft + panelWidth / 2f
+//
+//        hudPaint.textSize = 50f
+//        canvas.drawText("CHÚC MỪNG!", centerX, currentY + 60f, hudPaint)
+//
+//        hudPaint.textSize = 40f
+//        canvas.drawText("A: Về Main Menu", centerX, currentY + 120f, hudPaint)
+//
+//        // Reset lại textAlign để không ảnh hưởng đến các phần UI khác
+//        hudPaint.textAlign = Paint.Align.LEFT
     }
 }

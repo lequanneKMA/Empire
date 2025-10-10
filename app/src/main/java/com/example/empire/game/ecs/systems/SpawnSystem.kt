@@ -68,6 +68,8 @@ class SpawnSystem {
     // Reference to tile map for collision (optional)
     private var tileMap: com.example.empire.game.map.TileMap? = null
     var onWaveCycleComplete: () -> Unit = {}
+    // New: called whenever a single wave is cleared (index in [1..waves])
+    var onWaveComplete: (clearedWave: Int, totalWaves: Int) -> Unit = { _, _ -> }
 
     fun setMapBounds(w: Int, h: Int) { mapWidthPx = w; mapHeightPx = h }
     fun setTileMap(map: com.example.empire.game.map.TileMap?) { this.tileMap = map }
@@ -103,6 +105,10 @@ class SpawnSystem {
         // If enemies cleared and more waves remain
         // Consider enemy 'cleared' once it has entered DEAD state (không cần chờ biến mất hẳn)
         if (_enemies.none { it.alive && it.state != Enemy.State.DEAD }) {
+            // currentWave has just been cleared
+            if (currentWave in 1..cfg.waves) {
+                onWaveComplete(currentWave, cfg.waves)
+            }
             if (currentWave < cfg.waves) {
                 val next = currentWave + 1
                 spawnWave(next, cfg)
