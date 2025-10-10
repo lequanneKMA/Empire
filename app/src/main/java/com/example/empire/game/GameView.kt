@@ -148,38 +148,7 @@ class GameView @JvmOverloads constructor(
     private val combatSystem = CombatSystem(spawnSystem)
     // Boss (final map only)
     private val bossSprites = BossSpriteLoader(context)
-    private val bossSystem = BossSystem(bossSprites, spawnSystem).apply {
-        onPlayerHit = { dmg ->
-            if (!playerStats.isDead && uiState != UiState.GAME_OVER) {
-                playerStats.damage(dmg)
-                if (playerStats.isDead) {
-                    uiState = UiState.GAME_OVER
-                    println("Player died -> GAME OVER. Nhấn A để hồi sinh về main map, nhấn B để về Start.")
-                    gameOverOverlay.show()
-                }
-            }
-        }
-        onArmyImpact = { cx, cy, range, dmg ->
-            var best: UnitEntity? = null
-            var bestD2 = Float.MAX_VALUE
-            armySystem.units.forEach { u ->
-                if (u.hp <= 0) return@forEach
-                val dx = u.x - cx
-                val dy = u.y - cy
-                val d2 = dx*dx + dy*dy
-                if (d2 <= range*range && d2 < bestD2) { bestD2 = d2; best = u }
-            }
-            best?.let { target ->
-                target.hp -= dmg
-                if (target.hp < 0) target.hp = 0
-            }
-        }
-        onDeath = {
-            uiState = UiState.WINNER
-            winnerOverlay.show()
-            println("[WINNER] Boss defeated! Nhấn A để về Main Menu")
-        }
-    }
+    private val bossSystem = BossSystem(bossSprites, spawnSystem)
     // progression & stats
     private val progression = ProgressionManager(intArrayOf(50)).also {
         // Restore progression from save (recompute from totalXp)
@@ -233,6 +202,38 @@ class GameView @JvmOverloads constructor(
         sheepSystem.farmBottom = farmH - sheepFarmBottomMargin
     }
     init {
+        // Now that armySystem exists, inject boss into army and set boss callbacks
+        armySystem.setBossSystem(bossSystem)
+        bossSystem.onPlayerHit = { dmg ->
+            if (!playerStats.isDead && uiState != UiState.GAME_OVER) {
+                playerStats.damage(dmg)
+                if (playerStats.isDead) {
+                    uiState = UiState.GAME_OVER
+                    println("Player died -> GAME OVER. Nhấn A để hồi sinh về main map, nhấn B để về Start.")
+                    gameOverOverlay.show()
+                }
+            }
+        }
+        bossSystem.onArmyImpact = { cx, cy, range, dmg ->
+            var best: UnitEntity? = null
+            var bestD2 = Float.MAX_VALUE
+            armySystem.units.forEach { u ->
+                if (u.hp <= 0) return@forEach
+                val dx = u.x - cx
+                val dy = u.y - cy
+                val d2 = dx*dx + dy*dy
+                if (d2 <= range*range && d2 < bestD2) { bestD2 = d2; best = u }
+            }
+            best?.let { target ->
+                target.hp -= dmg
+                if (target.hp < 0) target.hp = 0
+            }
+        }
+        bossSystem.onDeath = {
+            uiState = UiState.WINNER
+            winnerOverlay.show()
+            println("[WINNER] Boss defeated! Nhấn A để về Main Menu")
+        }
         spawnSystem.onEnemyAttackImpact = { enemy ->
             armySystem.onEnemyAttackImpact(enemy)
         }

@@ -107,7 +107,7 @@ class MapSelectOverlay(
         val prevAlign = hudPaint.textAlign
 
         hudPaint.textAlign = Paint.Align.CENTER
-        hudPaint.textSize = 26f
+        hudPaint.textSize = 46f
         hudPaint.isFakeBoldText = true
         hudPaint.color = Color.WHITE
         canvas.drawText("CHỌN MAP", headerRect.centerX(), headerRect.centerY() + 9f, hudPaint)
@@ -125,7 +125,7 @@ class MapSelectOverlay(
         }
         val textPaint = hudPaint
         textPaint.textAlign = Paint.Align.LEFT
-        textPaint.textSize = 18f
+        textPaint.textSize = 36f
         textPaint.isFakeBoldText = true
         textPaint.color = Color.WHITE
 
@@ -141,17 +141,17 @@ class MapSelectOverlay(
             val name = m.id.uppercase()
             val nameX = rowRect.left + 14f
             val baseY = rowRect.centerY() + 7f
-            textPaint.textSize = 20f
+            textPaint.textSize = 40f
             textPaint.color = Color.WHITE
             canvas.drawText(name, nameX, baseY, textPaint)
 
             // Middle: Level req
-            textPaint.textSize = 16f
+            textPaint.textSize = 32f
             textPaint.color = Color.argb(220, 180, 200, 255)
             canvas.drawText("L${m.levelReq}", nameX + 170f, baseY, textPaint)
 
             // Right: types and status chip
-            val types = if (m.enemyTypes.isEmpty()) "No quái" else m.enemyTypes.joinToString("/") { it.name.substring(0,3) }
+            val types = if (m.enemyTypes.isEmpty()) "He He He" else m.enemyTypes.joinToString("/") { it.name.substring(0,3) }
             textPaint.color = Color.argb(220, 210, 220, 230)
             canvas.drawText(types, nameX + 220f, baseY, textPaint)
 
@@ -176,7 +176,7 @@ class MapSelectOverlay(
             }
             canvas.drawRoundRect(chipRect, 12f, 12f, chipStroke)
             textPaint.textAlign = Paint.Align.CENTER
-            textPaint.textSize = 14f
+            textPaint.textSize = 20f
             textPaint.color = Color.WHITE
             canvas.drawText(chipText, chipRect.centerX(), chipRect.centerY() + 5f, textPaint)
             textPaint.textAlign = Paint.Align.LEFT

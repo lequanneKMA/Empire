@@ -100,14 +100,14 @@ class BuyMenuOverlay(
         val prevAlign = hudPaint.textAlign
 
         hudPaint.textAlign = Paint.Align.LEFT
-        hudPaint.textSize = 30f
+        hudPaint.textSize = 47f
         hudPaint.isFakeBoldText = true
         hudPaint.color = Color.WHITE
         canvas.drawText("MUA QUÂN", headerRect.left + 16f, headerRect.centerY() + 9f, hudPaint)
 
         // Hiển thị tài nguyên hiện có ở góc phải header
         hudPaint.textAlign = Paint.Align.RIGHT
-        hudPaint.textSize = 24f
+        hudPaint.textSize = 40f
         hudPaint.isFakeBoldText = false
         hudPaint.color = Color.argb(235, 240, 240, 245)
         canvas.drawText("Gold: ${resources.gold}   Meat: ${resources.meat}", headerRect.right - 16f, headerRect.centerY() + 7f, hudPaint)
@@ -150,13 +150,13 @@ class BuyMenuOverlay(
 
             // Name
             hudPaint.textAlign = Paint.Align.LEFT
-            hudPaint.textSize = 25f
+            hudPaint.textSize = 44f
             hudPaint.isFakeBoldText = true
             hudPaint.color = Color.WHITE
             canvas.drawText(name, rowRect.left + 14f, rowRect.centerY() + 7f, hudPaint)
 
             // Cost
-            hudPaint.textSize = 21f
+            hudPaint.textSize = 44f
             hudPaint.isFakeBoldText = false
             hudPaint.color = Color.argb(220, 210, 220, 230)
             canvas.drawText("G:${cost.gold}  M:${cost.meat}", rowRect.left + 180f, rowRect.centerY() + 6f, hudPaint)
@@ -174,7 +174,7 @@ class BuyMenuOverlay(
             }
             canvas.drawRoundRect(chipRect, 12f, 12f, chipStroke)
             hudPaint.textAlign = Paint.Align.CENTER
-            hudPaint.textSize = 14f
+            hudPaint.textSize = 24f
             hudPaint.color = Color.WHITE
             canvas.drawText(chipText, chipRect.centerX(), chipRect.centerY() + 5f, hudPaint)
 

@@ -5,6 +5,7 @@ import com.example.empire.game.economy.ResourceManager
 import com.example.empire.game.ecs.systems.SpawnSystem
 import com.example.empire.game.map.TileMap
 import com.example.empire.game.ai.ArmyAIController
+import com.example.empire.game.boss.BossSystem
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -18,6 +19,9 @@ class ArmySystem(
     private val spawnSystem: SpawnSystem, // để truy cập enemies
     private val projectileSystem: ProjectileSystem // bắn tên cho Archer
 ) {
+    // Optional boss reference injected later
+    private var bossSystem: BossSystem? = null
+    fun setBossSystem(boss: BossSystem?) { this.bossSystem = boss }
     private val _units = mutableListOf<UnitEntity>()
     val units: List<UnitEntity> get() = _units
 
@@ -147,8 +151,9 @@ class ArmySystem(
         val refreshTarget = targetAccum <= 0f
         if (refreshTarget) targetAccum = targetRefreshInterval
 
-        val enemies = spawnSystem.enemies
-        val anyEngaging = enemies.any { it.alive && it.hp > 0 } && _units.any { it.targetEnemyIndex != null }
+    val enemies = spawnSystem.enemies
+    val bossAlive = bossSystem?.boss?.hp?.let { it > 0 } ?: false
+    val anyEngaging = (enemies.any { it.alive && it.hp > 0 } || bossAlive) && _units.any { it.hp > 0 }
         // Auto switch formation type
         if (autoCircleOnCombat) {
             formationType = if (anyEngaging) FormationType.CIRCLE else FormationType.GRID
@@ -186,7 +191,8 @@ class ArmySystem(
         refreshTarget: Boolean
     ) {
         val target = acquireOrValidateTarget(u, enemies, refreshTarget)
-        if (target == null) {
+        val boss = bossSystem?.boss
+        if (target == null && (boss == null || boss.hp <= 0)) {
             // Không có mục tiêu => follow formation
             formationFollow(u, dt, playerX, playerY, idx, total)
             return
@@ -194,8 +200,18 @@ class ArmySystem(
         // Di chuyển / Attack
         val cx = u.x
         val cy = u.y
-        val ex = target.x + target.w/2f
-        val ey = target.y + target.h/2f
+        val ex: Float
+        val ey: Float
+        var isBossTarget = false
+        if (target != null) {
+            ex = target.x + target.w/2f
+            ey = target.y + target.h/2f
+        } else {
+            val b = boss!!
+            ex = b.x + b.w/2f
+            ey = b.y + b.h/2f
+            isBossTarget = true
+        }
         val dx = ex - cx
         val dy = ey - cy
         val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
@@ -216,7 +232,7 @@ class ArmySystem(
         } else {
             // trong tầm – tấn công nếu cooldown xong
             if (u.cooldown <= 0f) {
-                performMeleeAttack(u, target)
+                if (isBossTarget) performMeleeAttackBoss(u) else performMeleeAttack(u, target!!)
             } else {
                 u.anim = AnimState.IDLE
             }
@@ -291,14 +307,23 @@ class ArmySystem(
         refreshTarget: Boolean
     ) {
         val target = acquireOrValidateTarget(u, enemies, refreshTarget)
-        if (target == null) {
+        val boss = bossSystem?.boss
+        if (target == null && (boss == null || boss.hp <= 0)) {
             formationFollow(u, dt, playerX, playerY, idx, total)
             return
         }
         val cx = u.x
         val cy = u.y
-        val ex = target.x + target.w/2f
-        val ey = target.y + target.h/2f
+        val ex: Float
+        val ey: Float
+        if (target != null) {
+            ex = target.x + target.w/2f
+            ey = target.y + target.h/2f
+        } else {
+            val b = boss!!
+            ex = b.x + b.w/2f
+            ey = b.y + b.h/2f
+        }
         val dx = ex - cx
         val dy = ey - cy
         val dist = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
@@ -324,6 +349,21 @@ class ArmySystem(
                 u.anim = AnimState.IDLE
             }
         }
+    }
+
+    private fun performMeleeAttackBoss(u: UnitEntity) {
+        val dmg = u.stats.attack
+        bossSystem?.applyDamage(dmg)
+        // animation/variant like normal
+        if (u.type == UnitType.WARRIOR) {
+            val tier = playerTierProvider().coerceAtLeast(0)
+            u.attackVariantIndex = if (tier >= 1) 1 else 0
+        } else {
+            u.attackVariantIndex = (u.attackVariantIndex + 1) % 2
+        }
+        u.attackAnimTimer = 0f
+        u.cooldown = u.stats.cooldown
+        u.anim = AnimState.ATTACK
     }
 
     private fun performRangedAttack(u: UnitEntity, dx: Float, dy: Float, dist: Float) {
